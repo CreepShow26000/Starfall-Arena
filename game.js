@@ -6,6 +6,7 @@
   const TAU = Math.PI * 2;
   const MAX_EVENTS = 6;
   const DAILY_PREFIX = "SF-DAILY";
+  const SETTINGS_STORAGE_KEY = "starfall_settings_v1";
   const EVENT_MIN_GAP = 11;
   const EVENT_MAX_GAP = 18;
   const qualityModes = {
@@ -15,6 +16,21 @@
   };
   let seededRandom = false;
   let rngState = 0;
+
+  function defaultSettings() {
+    return {
+      screenShake: 1,
+      showTouchUi: true,
+      colorblind: false,
+      lowVfx: false,
+      aimAssist: 0.16,
+      quality: "balanced",
+      accessibilityPreset: "standard",
+      dashKey: "shift",
+      bombKey: "e",
+      warpKey: "enter",
+    };
+  }
 
   const rng = {
     next() {
@@ -85,16 +101,19 @@
     waveSkipCd: 0,
     pointer: { x: WIDTH * 0.5, y: HEIGHT * 0.5, inside: false },
     coopJoined: true,
-    settings: {
-      screenShake: 1,
-      showTouchUi: true,
-      colorblind: false,
-      lowVfx: false,
-      aimAssist: 0.16,
-      quality: "balanced",
-      dashKey: "shift",
-      bombKey: "e",
-      warpKey: "enter",
+    settings: defaultSettings(),
+    ui: {
+      screenScale: 1,
+      hudScale: 1,
+      touchScale: 1,
+      compactHud: false,
+    },
+    perf: {
+      avgFps: 60,
+      sampleTime: 0,
+      sampleFrames: 0,
+      adaptiveEnemyCapMul: 1,
+      adaptiveVfxMul: 1,
     },
     touch: {
       enabled: (navigator.maxTouchPoints || 0) > 0,
@@ -237,6 +256,37 @@
     } catch {}
   }
 
+  function loadSettings() {
+    const base = defaultSettings();
+    try {
+      const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (!raw) return base;
+      const parsed = JSON.parse(raw);
+      return {
+        screenShake: Math.max(0, Math.min(1.5, Number(parsed.screenShake ?? base.screenShake))),
+        showTouchUi: Boolean(parsed.showTouchUi ?? base.showTouchUi),
+        colorblind: Boolean(parsed.colorblind ?? base.colorblind),
+        lowVfx: Boolean(parsed.lowVfx ?? base.lowVfx),
+        aimAssist: Math.max(0, Math.min(0.45, Number(parsed.aimAssist ?? base.aimAssist))),
+        quality: ["high", "balanced", "performance"].includes(parsed.quality) ? parsed.quality : base.quality,
+        accessibilityPreset: ["standard", "comfort", "high_contrast", "custom"].includes(parsed.accessibilityPreset)
+          ? parsed.accessibilityPreset
+          : base.accessibilityPreset,
+        dashKey: ["shift", "q", "mouse"].includes(parsed.dashKey) ? parsed.dashKey : base.dashKey,
+        bombKey: ["e", " ", "r"].includes(parsed.bombKey) ? parsed.bombKey : base.bombKey,
+        warpKey: ["enter", "v", "g"].includes(parsed.warpKey) ? parsed.warpKey : base.warpKey,
+      };
+    } catch {
+      return base;
+    }
+  }
+
+  function saveSettings() {
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings));
+    } catch {}
+  }
+
   function hashString(input) {
     let h = 2166136261;
     for (let i = 0; i < input.length; i++) {
@@ -296,6 +346,8 @@
     const cur = state.settings[key];
     const idx = list.indexOf(cur);
     state.settings[key] = list[(idx + 1) % list.length];
+    state.settings.accessibilityPreset = "custom";
+    saveSettings();
     pushEvent(`${which} key set to ${displayKey(state.settings[key])}.`);
   }
 
@@ -323,14 +375,87 @@
     const opts = ["high", "balanced", "performance"];
     const idx = opts.indexOf(state.settings.quality);
     state.settings.quality = opts[(idx + 1) % opts.length];
+    state.settings.accessibilityPreset = "custom";
+    saveSettings();
   }
 
   function adjustAimAssist(delta) {
     state.settings.aimAssist = Math.max(0, Math.min(0.45, state.settings.aimAssist + delta));
+    state.settings.accessibilityPreset = "custom";
+    saveSettings();
   }
 
   function adjustScreenShake(delta) {
     state.settings.screenShake = Math.max(0, Math.min(1.5, state.settings.screenShake + delta));
+    state.settings.accessibilityPreset = "custom";
+    saveSettings();
+  }
+
+  function applyAccessibilityPreset(name) {
+    if (name === "comfort") {
+      state.settings.colorblind = true;
+      state.settings.lowVfx = true;
+      state.settings.quality = "performance";
+      state.settings.screenShake = 0.45;
+      state.settings.aimAssist = 0.24;
+    } else if (name === "high_contrast") {
+      state.settings.colorblind = true;
+      state.settings.lowVfx = false;
+      state.settings.quality = "balanced";
+      state.settings.screenShake = 0.8;
+      state.settings.aimAssist = 0.2;
+    } else {
+      state.settings.colorblind = false;
+      state.settings.lowVfx = false;
+      state.settings.quality = "balanced";
+      state.settings.screenShake = 1;
+      state.settings.aimAssist = 0.16;
+      name = "standard";
+    }
+    state.settings.accessibilityPreset = name;
+    saveSettings();
+    pushEvent(`Accessibility preset: ${name.replace("_", " ")}`);
+  }
+
+  function cycleAccessibilityPreset() {
+    const order = ["standard", "comfort", "high_contrast"];
+    const idx = order.indexOf(state.settings.accessibilityPreset);
+    const next = order[(idx + 1 + order.length) % order.length];
+    applyAccessibilityPreset(next);
+  }
+
+  function resetSettingsDefaults() {
+    state.settings = defaultSettings();
+    saveSettings();
+    pushEvent("Settings reset to defaults.");
+  }
+
+  function refreshUiMetrics() {
+    const rect = canvas.getBoundingClientRect();
+    const scale = rect.width > 0 ? rect.width / WIDTH : 1;
+    state.ui.screenScale = scale;
+    state.ui.hudScale = Math.max(1, Math.min(1.9, 1 / Math.max(scale, 0.55)));
+    state.ui.touchScale = Math.max(1, Math.min(2.2, 1 / Math.max(scale, 0.45)));
+    state.ui.compactHud = rect.width < 860 || rect.height < 520;
+    if (state.touch.leftId === null) {
+      state.touch.stickBase = { x: 86 * state.ui.touchScale, y: HEIGHT - 86 * state.ui.touchScale };
+    }
+  }
+
+  function updatePerformanceTuning(delta) {
+    if (typeof window.__drainVirtualTimePending === "function") return;
+    if (!(delta > 0)) return;
+    state.perf.sampleTime += delta;
+    state.perf.sampleFrames += 1;
+    if (state.perf.sampleTime < 1) return;
+    const fps = state.perf.sampleFrames / state.perf.sampleTime;
+    state.perf.avgFps = state.perf.avgFps * 0.7 + fps * 0.3;
+    state.perf.sampleTime = 0;
+    state.perf.sampleFrames = 0;
+    const target = state.settings.quality === "high" ? 56 : 58;
+    if (state.perf.avgFps < target - 4) state.perf.adaptiveEnemyCapMul = Math.max(0.62, state.perf.adaptiveEnemyCapMul - 0.08);
+    if (state.perf.avgFps > target + 3) state.perf.adaptiveEnemyCapMul = Math.min(1.15, state.perf.adaptiveEnemyCapMul + 0.05);
+    state.perf.adaptiveVfxMul = Math.max(0.45, Math.min(1.1, state.perf.adaptiveEnemyCapMul + 0.12));
   }
 
   function getQualitySettings() {
@@ -686,6 +811,7 @@
   ];
   const bossCycle = ["dreadnought", "lancer", "hive", "bulwark"];
   state.meta = loadMeta();
+  state.settings = loadSettings();
   state.challenge = buildTodayChallenge();
 
   function resetRunMods() {
@@ -985,10 +1111,16 @@
   }
 
   function getTouchButtonLayout() {
+    const tScale = state.ui.touchScale;
+    const edge = 32 * tScale;
+    const gap = 14 * tScale;
+    const dashR = 44 * tScale;
+    const bombR = 44 * tScale;
+    const warpR = 40 * tScale;
     return {
-      dash: { x: WIDTH - 210, y: HEIGHT - 120, r: 44 },
-      bomb: { x: WIDTH - 120, y: HEIGHT - 185, r: 44 },
-      warp: { x: WIDTH - 90, y: HEIGHT - 95, r: 40 },
+      dash: { x: WIDTH - edge - dashR * 2.6, y: HEIGHT - edge - dashR, r: dashR },
+      bomb: { x: WIDTH - edge - bombR, y: HEIGHT - edge - bombR * 2.75 - gap, r: bombR },
+      warp: { x: WIDTH - edge - warpR, y: HEIGHT - edge - warpR, r: warpR },
     };
   }
 
@@ -1022,7 +1154,7 @@
 
   function updateTouchMoveFromPoint(pt) {
     const t = state.touch;
-    const maxR = 58;
+    const maxR = 58 * state.ui.touchScale;
     const dx = pt.x - t.stickBase.x;
     const dy = pt.y - t.stickBase.y;
     const d = Math.hypot(dx, dy) || 1;
@@ -1035,6 +1167,7 @@
     state.touch.leftId = null;
     state.touch.moveX = 0;
     state.touch.moveY = 0;
+    state.touch.stickBase = { x: 86 * state.ui.touchScale, y: HEIGHT - 86 * state.ui.touchScale };
   }
 
   function menuButtonRects() {
@@ -1056,6 +1189,8 @@
     const bindDash = { x: WIDTH * 0.63, y: HEIGHT * 0.605, w: WIDTH * 0.075, h: 34 };
     const bindBomb = { x: WIDTH * 0.715, y: HEIGHT * 0.605, w: WIDTH * 0.075, h: 34 };
     const bindWarp = { x: WIDTH * 0.8, y: HEIGHT * 0.605, w: WIDTH * 0.075, h: 34 };
+    const preset = { x: WIDTH * 0.63, y: HEIGHT * 0.655, w: WIDTH * 0.11, h: 34 };
+    const resetSettings = { x: WIDTH * 0.76, y: HEIGHT * 0.655, w: WIDTH * 0.11, h: 34 };
     return {
       start,
       settings,
@@ -1075,6 +1210,8 @@
       bindDash,
       bindBomb,
       bindWarp,
+      preset,
+      resetSettings,
     };
   }
 
@@ -1095,17 +1232,30 @@
       else return false;
     } else {
       if (pointInRect(pt, btn.back)) state.menuScreen = "home";
-      else if (pointInRect(pt, btn.touchToggle)) state.settings.showTouchUi = !state.settings.showTouchUi;
+      else if (pointInRect(pt, btn.touchToggle)) {
+        state.settings.showTouchUi = !state.settings.showTouchUi;
+        state.settings.accessibilityPreset = "custom";
+        saveSettings();
+      }
       else if (pointInRect(pt, btn.shakeDown)) adjustScreenShake(-0.1);
       else if (pointInRect(pt, btn.shakeUp)) adjustScreenShake(0.1);
       else if (pointInRect(pt, btn.quality)) cycleQualityMode();
-      else if (pointInRect(pt, btn.lowVfx)) state.settings.lowVfx = !state.settings.lowVfx;
-      else if (pointInRect(pt, btn.colorblind)) state.settings.colorblind = !state.settings.colorblind;
+      else if (pointInRect(pt, btn.lowVfx)) {
+        state.settings.lowVfx = !state.settings.lowVfx;
+        state.settings.accessibilityPreset = "custom";
+        saveSettings();
+      } else if (pointInRect(pt, btn.colorblind)) {
+        state.settings.colorblind = !state.settings.colorblind;
+        state.settings.accessibilityPreset = "custom";
+        saveSettings();
+      }
       else if (pointInRect(pt, btn.aimDown)) adjustAimAssist(-0.04);
       else if (pointInRect(pt, btn.aimUp)) adjustAimAssist(0.04);
       else if (pointInRect(pt, btn.bindDash)) cycleBinding("dash");
       else if (pointInRect(pt, btn.bindBomb)) cycleBinding("bomb");
       else if (pointInRect(pt, btn.bindWarp)) cycleBinding("warp");
+      else if (pointInRect(pt, btn.preset)) cycleAccessibilityPreset();
+      else if (pointInRect(pt, btn.resetSettings)) resetSettingsDefaults();
       else return false;
     }
     return true;
@@ -1153,6 +1303,12 @@
     },
     { passive: false }
   );
+
+  window.addEventListener("resize", refreshUiMetrics);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", refreshUiMetrics);
+  }
+  refreshUiMetrics();
 
   canvas.addEventListener(
     "touchmove",
@@ -1207,10 +1363,24 @@
     if (state.mode === "menu" && k === "b") copyRunCode();
     if (state.mode === "menu" && ["7", "8", "9"].includes(k)) purchaseMetaUpgrade(k);
     if (state.mode === "menu" && k === "j") state.coopJoined = !state.coopJoined;
-    if (state.mode === "menu" && state.menuScreen === "settings" && k === "t") state.settings.showTouchUi = !state.settings.showTouchUi;
-    if (state.mode === "menu" && state.menuScreen === "settings" && k === "c") state.settings.colorblind = !state.settings.colorblind;
-    if (state.mode === "menu" && state.menuScreen === "settings" && k === "l") state.settings.lowVfx = !state.settings.lowVfx;
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "t") {
+      state.settings.showTouchUi = !state.settings.showTouchUi;
+      state.settings.accessibilityPreset = "custom";
+      saveSettings();
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "c") {
+      state.settings.colorblind = !state.settings.colorblind;
+      state.settings.accessibilityPreset = "custom";
+      saveSettings();
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "l") {
+      state.settings.lowVfx = !state.settings.lowVfx;
+      state.settings.accessibilityPreset = "custom";
+      saveSettings();
+    }
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "z") cycleQualityMode();
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "a") cycleAccessibilityPreset();
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "0") resetSettingsDefaults();
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "u") cycleBinding("dash");
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "i") cycleBinding("bomb");
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "o") cycleBinding("warp");
@@ -1321,6 +1491,8 @@
       bossType: kind === "boss" ? bossType : "",
       burstCd: kind === "boss" ? d.burst : 999,
       summonCd: kind === "boss" && d.summon ? d.summon : 999,
+      telegraphShot: 0,
+      telegraphBurst: 0,
       hitFlash: 0,
     });
   }
@@ -1330,7 +1502,7 @@
     const modifier = state.waveModifier || waveModifiers[0];
     const pacing = Math.max(0.32, (1.3 - state.wave * 0.05) / (modifier.spawnMul * state.runMods.spawnMul));
     const quality = getQualitySettings();
-    const enemyCap = quality.enemyCap;
+    const enemyCap = Math.max(8, Math.floor(quality.enemyCap * state.perf.adaptiveEnemyCapMul));
     state.danger += dt;
     if (state.danger >= pacing && state.enemies.length < enemyCap) {
       state.danger = 0;
@@ -1428,7 +1600,7 @@
 
   function spawnParticles(x, y, color, n, force = 130) {
     const quality = getQualitySettings();
-    const vfxMul = state.settings.lowVfx ? 0.25 : quality.particleMul;
+    const vfxMul = (state.settings.lowVfx ? 0.25 : quality.particleMul) * state.perf.adaptiveVfxMul;
     const count = Math.max(1, Math.round(n * vfxMul));
     for (let i = 0; i < count; i++) {
       const a = rng.range(0, TAU);
@@ -1825,6 +1997,8 @@
       e.x += e.vx * dt;
       e.y += e.vy * dt;
       e.hitFlash = Math.max(0, e.hitFlash - dt);
+      e.telegraphShot = Math.max(0, (e.telegraphShot || 0) - dt);
+      e.telegraphBurst = Math.max(0, (e.telegraphBurst || 0) - dt);
       if (e.kind === "shooter" && d > 120) {
         e.shootCd -= dt * freezeMul;
         if (e.shootCd <= 0) {
@@ -1843,6 +2017,8 @@
       if (e.boss) {
         e.shootCd -= dt * freezeMul;
         e.burstCd -= dt * freezeMul;
+        if (e.shootCd > 0 && e.shootCd < 0.36) e.telegraphShot = Math.max(e.telegraphShot, 0.22);
+        if (e.burstCd > 0 && e.burstCd < 0.55) e.telegraphBurst = Math.max(e.telegraphBurst, 0.3);
         const pMul = state.runMods.projectileSpeedMul;
         if (e.bossType === "lancer") {
           if (e.shootCd <= 0) {
@@ -2205,6 +2381,24 @@
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.r, 0, TAU);
       ctx.fill();
+      if (e.boss && (e.telegraphShot > 0 || e.telegraphBurst > 0)) {
+        if (e.telegraphBurst > 0) {
+          ctx.strokeStyle = `rgba(255, 194, 120, ${0.35 + e.telegraphBurst})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, e.r + 18 + (0.3 - Math.min(0.3, e.telegraphBurst)) * 24, 0, TAU);
+          ctx.stroke();
+        }
+        if (e.telegraphShot > 0) {
+          const aim = Math.atan2(player.y - e.y, player.x - e.x);
+          ctx.strokeStyle = `rgba(255, 214, 168, ${0.35 + e.telegraphShot})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(e.x, e.y);
+          ctx.lineTo(e.x + Math.cos(aim) * 210, e.y + Math.sin(aim) * 210);
+          ctx.stroke();
+        }
+      }
       const hpw = e.boss ? 96 : 32;
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(e.x - hpw * 0.5, e.y - e.r - 13, hpw, 4);
@@ -2243,15 +2437,16 @@
   }
 
   function drawHud() {
+    const compact = state.ui.compactHud;
     ctx.fillStyle = "rgba(8, 12, 24, 0.7)";
-    ctx.fillRect(16, 14, 350, 122);
+    ctx.fillRect(16, 14, 350, compact ? 100 : 122);
     ctx.fillStyle = "#d7e6ff";
     ctx.font = "20px Trebuchet MS";
     ctx.fillText(`Wave ${state.wave}`, 30, 38);
     ctx.fillText(`Score ${Math.floor(state.score)}`, 30, 64);
-    ctx.fillText(`Kills ${state.kills}`, 30, 89);
+    if (!compact) ctx.fillText(`Kills ${state.kills}`, 30, 89);
     ctx.fillStyle = "#f1f7ff";
-    ctx.fillText(`Weapon ${weaponDefs[state.selectedWeapon].name}`, 30, 114);
+    ctx.fillText(`Weapon ${weaponDefs[state.selectedWeapon].name}`, 30, compact ? 89 : 114);
     ctx.font = "14px Trebuchet MS";
     ctx.fillStyle = "#b9cbef";
     ctx.fillText(`Mode ${state.runMode.toUpperCase()}`, 250, 38);
@@ -2284,7 +2479,7 @@
     ctx.fillText(`Warp ${(state.waveSkipCd <= 0 ? "Ready" : state.waveSkipCd.toFixed(1) + "s")} (${displayKey(state.settings.warpKey)})`, WIDTH - 306, 139);
 
     ctx.fillStyle = "rgba(8, 12, 24, 0.7)";
-    ctx.fillRect(16, 144, 350, 84);
+    ctx.fillRect(16, 144, 350, compact ? 64 : 84);
     ctx.fillStyle = (state.waveModifier && state.waveModifier.color) || "#d6e1ff";
     ctx.fillText(`Modifier: ${(state.waveModifier && state.waveModifier.name) || "Standard"}`, 30, 172);
     if (state.mission) {
@@ -2292,7 +2487,7 @@
       const target = state.mission.id === "survive" ? `${state.mission.target}s` : String(state.mission.target);
       ctx.fillStyle = state.mission.complete ? "#9fffc5" : "#e6f1ff";
       ctx.fillText(`${state.mission.label}`, 30, 198);
-      ctx.fillText(`Progress ${prog} / ${target}`, 30, 222);
+      if (!compact) ctx.fillText(`Progress ${prog} / ${target}`, 30, 222);
     }
     if (state.activeEvent) {
       ctx.fillStyle = "#ffd6ab";
@@ -2307,21 +2502,23 @@
       .map((id) => synergyDefs.find((s) => s.id === id)?.label || id);
     if (synergyNames.length) {
       ctx.fillStyle = "#9ff6d7";
-      ctx.fillText(`Synergy: ${synergyNames.join(" + ")}`, 390, 222);
+      if (!compact) ctx.fillText(`Synergy: ${synergyNames.join(" + ")}`, 390, 222);
     }
 
     ctx.fillStyle = "#a8b8d8";
     ctx.font = "14px Trebuchet MS";
-    ctx.fillText(
-      `Move WASD/Arrows | Auto-fire | Aim mouse | Bomb ${displayKey(state.settings.bombKey)} | Warp ${displayKey(
-        state.settings.warpKey
-      )} | Pause P | Fullscreen F`,
-      18,
-      HEIGHT - 20
-    );
+    if (!compact) {
+      ctx.fillText(
+        `Move WASD/Arrows | Auto-fire | Aim mouse | Bomb ${displayKey(state.settings.bombKey)} | Warp ${displayKey(
+          state.settings.warpKey
+        )} | Pause P | Fullscreen F`,
+        18,
+        HEIGHT - 20
+      );
+    }
     if (state.coopJoined) {
       ctx.fillStyle = "#8cf8d7";
-      ctx.fillText("Co-op P2: IJKL move | O dash | U bomb | Auto-aim fire", 18, HEIGHT - 38);
+      if (!compact) ctx.fillText("Co-op P2: IJKL move | O dash | U bomb | Auto-aim fire", 18, HEIGHT - 38);
       ctx.fillText(`P2 Bombs ${wingman.bombs} | P2 Dash ${wingman.dashCd <= 0 ? "Ready" : wingman.dashCd.toFixed(1) + "s"}`, WIDTH - 320, 178);
     }
 
@@ -2403,18 +2600,19 @@
       ctx.fillText(`Quality: ${(qualityModes[state.settings.quality] || qualityModes.balanced).label} (Z)`, WIDTH * 0.13, HEIGHT * 0.49);
       ctx.fillText(`Low VFX: ${state.settings.lowVfx ? "ON" : "OFF"} (L) | Colorblind: ${state.settings.colorblind ? "ON" : "OFF"} (C)`, WIDTH * 0.13, HEIGHT * 0.54);
       ctx.fillText(`Aim assist: ${(state.settings.aimAssist * 100).toFixed(0)}% ([ / ])`, WIDTH * 0.13, HEIGHT * 0.58);
+      ctx.fillText(`Accessibility preset: ${state.settings.accessibilityPreset.replace("_", " ")} (A)`, WIDTH * 0.13, HEIGHT * 0.62);
       ctx.fillText(
         `Keys: Dash ${displayKey(state.settings.dashKey)}(U), Bomb ${displayKey(state.settings.bombKey)}(I), Warp ${displayKey(
           state.settings.warpKey
         )}(O)`,
         WIDTH * 0.13,
-        HEIGHT * 0.63
+        HEIGHT * 0.66
       );
-      ctx.fillText(`Permanent upgrades: 7 Hull (${getMetaUpgradeCost(state.meta?.perks.hull || 0)})`, WIDTH * 0.13, HEIGHT * 0.67);
+      ctx.fillText(`Permanent upgrades: 7 Hull (${getMetaUpgradeCost(state.meta?.perks.hull || 0)})`, WIDTH * 0.13, HEIGHT * 0.69);
       ctx.fillText(
         `8 Cannons (${getMetaUpgradeCost(state.meta?.perks.cannons || 0)}) | 9 Thrusters (${getMetaUpgradeCost(state.meta?.perks.thrusters || 0)})`,
         WIDTH * 0.13,
-        HEIGHT * 0.71
+        HEIGHT * 0.725
       );
 
       ctx.fillStyle = "rgba(143, 190, 255, 0.95)";
@@ -2441,6 +2639,10 @@
       ctx.fillRect(btn.bindDash.x, btn.bindDash.y, btn.bindDash.w, btn.bindDash.h);
       ctx.fillRect(btn.bindBomb.x, btn.bindBomb.y, btn.bindBomb.w, btn.bindBomb.h);
       ctx.fillRect(btn.bindWarp.x, btn.bindWarp.y, btn.bindWarp.w, btn.bindWarp.h);
+      ctx.fillStyle = "rgba(249, 232, 157, 0.95)";
+      ctx.fillRect(btn.preset.x, btn.preset.y, btn.preset.w, btn.preset.h);
+      ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
+      ctx.fillRect(btn.resetSettings.x, btn.resetSettings.y, btn.resetSettings.w, btn.resetSettings.h);
       ctx.fillStyle = "#122947";
       ctx.fillText("Touch", btn.touchToggle.x + 30, btn.touchToggle.y + 21);
       ctx.fillText("Shake-", btn.shakeDown.x + 25, btn.shakeDown.y + 21);
@@ -2453,6 +2655,8 @@
       ctx.fillText("Dash", btn.bindDash.x + 22, btn.bindDash.y + 21);
       ctx.fillText("Bomb", btn.bindBomb.x + 20, btn.bindBomb.y + 21);
       ctx.fillText("Warp", btn.bindWarp.x + 21, btn.bindWarp.y + 21);
+      ctx.fillText("Preset", btn.preset.x + 23, btn.preset.y + 21);
+      ctx.fillText("Reset", btn.resetSettings.x + 28, btn.resetSettings.y + 21);
     }
   }
 
@@ -2565,7 +2769,9 @@
     if (!(state.mode === "playing" && state.settings.showTouchUi && state.touch.enabled)) return;
     const t = state.touch;
     const buttons = getTouchButtonLayout();
-    const stickR = 58;
+    const stickR = 58 * state.ui.touchScale;
+    const knobR = 23 * state.ui.touchScale;
+    const fontSize = Math.round(18 * Math.max(1, state.ui.touchScale * 0.8));
     ctx.save();
     ctx.globalAlpha = 0.86;
     ctx.fillStyle = "rgba(14,24,44,0.72)";
@@ -2576,7 +2782,7 @@
     const knobY = t.stickBase.y + t.moveY * stickR;
     ctx.fillStyle = "rgba(156,223,255,0.92)";
     ctx.beginPath();
-    ctx.arc(knobX, knobY, 23, 0, TAU);
+    ctx.arc(knobX, knobY, knobR, 0, TAU);
     ctx.fill();
 
     for (const [name, b] of Object.entries(buttons)) {
@@ -2586,7 +2792,7 @@
       ctx.arc(b.x, b.y, b.r, 0, TAU);
       ctx.fill();
       ctx.fillStyle = active ? "#122" : "#d8ebff";
-      ctx.font = "18px Trebuchet MS";
+      ctx.font = `${fontSize}px Trebuchet MS`;
       const label = name === "dash" ? "Dash" : name === "bomb" ? "Bomb" : "Warp";
       const tw = ctx.measureText(label).width;
       ctx.fillText(label, b.x - tw / 2, b.y + 6);
@@ -2633,8 +2839,13 @@
         colorblind: state.settings.colorblind,
         lowVfx: state.settings.lowVfx,
         quality: state.settings.quality,
+        accessibilityPreset: state.settings.accessibilityPreset,
         aimAssist: Number(state.settings.aimAssist.toFixed(2)),
         screenShake: Number(state.settings.screenShake.toFixed(2)),
+      },
+      performance: {
+        avgFps: Number(state.perf.avgFps.toFixed(1)),
+        adaptiveEnemyCapMul: Number(state.perf.adaptiveEnemyCapMul.toFixed(2)),
       },
       player: {
         x: Number(player.x.toFixed(1)),
@@ -2739,6 +2950,7 @@
   function frame(now) {
     const delta = Math.min(0.05, (now - last) / 1000);
     last = now;
+    updatePerformanceTuning(delta);
     if (!deterministicMode) {
       acc += delta;
       while (acc >= fixed) {

@@ -154,3 +154,27 @@ Original prompt: Create a really fun really really high quality game i can play 
 - Validation notes:
   - Verified settings clicks now toggle values in-menu (Low VFX/Colorblind/Quality).
   - `node --check game.js` passes.
+- Phase 1 implementation pass completed (stability + UX baseline):
+  - Added persistent settings storage (`starfall_settings_v1`) with safe loading/sanitization and save paths.
+  - Added accessibility preset system (`standard`, `comfort`, `high_contrast`, `custom`) with cycle + reset controls.
+  - Added clickable settings controls for preset cycle and full settings reset.
+  - Added adaptive performance tuner:
+    - Runtime FPS sampling (`avgFps`) when non-deterministic.
+    - Dynamic enemy-cap and VFX multipliers (`adaptiveEnemyCapMul`, `adaptiveVfxMul`).
+  - Added boss telegraph warnings:
+    - Pre-shot aim line telegraph.
+    - Pre-burst ring telegraph.
+  - Added mobile gameplay usability improvements in-game:
+    - Dynamic UI/touch scaling from actual canvas rect.
+    - Bigger touch controls/joystick on smaller screens.
+    - Compact HUD mode on constrained viewports.
+  - Added settings/perf fields to `render_game_to_text` for deterministic verification.
+- Supporting web shell updates:
+  - `style.css` updated for stronger centering + `100dvh` sizing + safe-area padding + touch action control.
+  - `index.html` includes mobile web app capability meta tags.
+- Validation:
+  - `node --check game.js` passed.
+  - Playwright regression runs:
+    - `actions-menu.json` passed
+    - `actions-long.json` passed
+  - No console/page error artifacts in latest runs.
