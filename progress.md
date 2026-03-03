@@ -93,3 +93,41 @@ Original prompt: Create a really fun really really high quality game i can play 
     - gameplay run (`output/web-game`)
     - menu render check (`output/web-game-menu/shot-0.png`)
     - no error files produced.
+- Feature expansion pass (single-player depth + retention + accessibility/performance):
+  - Added run mode framework: `standard`, `daily`, and `seeded` with deterministic RNG support and seed hashing.
+  - Added daily challenge generation (`SF-DAILY-YYYY-MM-DD`) with 3 mutators and persistent daily best score tracking in meta.
+  - Added custom seed entry (`V`) and copy-share code (`B`) from menu.
+  - Added richer meta persistence fields: `dailyBest` map and per-weapon best scores (`weaponBest`).
+  - Added dynamic run events/anomalies (`Meteor Storm`, `Gravity Well`, `Overcharge Field`, `Void Fog`, `Calm Lane`) with timed modifiers.
+  - Added synergy system with conditional unlocks from upgrade combinations:
+    - Blood Rush
+    - Orbital Forge
+    - Bombardier Core
+    - Hunter Rail
+    - Phase Glide
+  - Added kill streak tracking and on-hit floating damage numbers.
+  - Expanded boss roster/behaviors by boss type every 3rd wave:
+    - Dreadnought
+    - Lancer
+    - Hive (summons adds)
+    - Bulwark
+  - Added settings/features requested for long-term polish:
+    - Colorblind palette toggle (`C`)
+    - Low VFX mode (`L`)
+    - Quality mode cycling (`Z`) with enemy-cap + particle scaling
+    - Aim assist tuning (`[` / `]`)
+    - Basic keybinding cycles for dash/bomb/warp (`U`/`I`/`O`)
+  - Updated gameplay to respect configurable bindings for player actions.
+  - Updated HUD/menu overlays for run mode, active anomaly, streak, synergy state, and dynamic key labels.
+  - Updated `render_game_to_text` with new fields: run mode/seed, activeEvent, synergies, streak, daily/weapon best meta.
+- Menu overlap fix validated after expansion:
+  - Resized menu content panel and adjusted settings text positions so all lines render fully.
+  - Confirmed via screenshot checks for both Home and Settings screens.
+- Validation:
+  - `node --check game.js` passed.
+  - Playwright runs against `http://127.0.0.1:5173` completed successfully (no reported page/console error files).
+  - Visual checks performed on latest screenshots in `output/web-game/shot-0.png` (home + settings). 
+- TODO / next suggestions:
+  - Add leaderboard backend if you later want cross-device score comparison.
+  - Add ship unlock cosmetics tied to daily streak completion.
+  - Expand synergy UI with an in-menu codex page listing discovered combos.

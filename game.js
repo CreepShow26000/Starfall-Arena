@@ -5,10 +5,22 @@
   const HEIGHT = canvas.height;
   const TAU = Math.PI * 2;
   const MAX_EVENTS = 6;
+  const DAILY_PREFIX = "SF-DAILY";
+  const EVENT_MIN_GAP = 11;
+  const EVENT_MAX_GAP = 18;
+  const qualityModes = {
+    high: { enemyCap: 28, particleMul: 1, label: "High" },
+    balanced: { enemyCap: 22, particleMul: 0.75, label: "Balanced" },
+    performance: { enemyCap: 16, particleMul: 0.45, label: "Performance" },
+  };
+  let seededRandom = false;
+  let rngState = 0;
 
   const rng = {
     next() {
-      return Math.random();
+      if (!seededRandom) return Math.random();
+      rngState = (1664525 * rngState + 1013904223) >>> 0;
+      return rngState / 4294967296;
     },
     range(min, max) {
       return min + (max - min) * this.next();
@@ -21,6 +33,8 @@
   const state = {
     mode: "menu",
     menuScreen: "home",
+    runMode: "standard",
+    runSeed: "",
     time: 0,
     wave: 1,
     waveClock: 0,
@@ -42,7 +56,27 @@
     unlockedWeapons: { pulse: true, scatter: false, rail: false },
     choices: [],
     waveModifier: null,
+    activeEvent: null,
+    eventClock: EVENT_MIN_GAP,
+    runMods: {
+      enemySpeedMul: 1,
+      enemyHpMul: 1,
+      spawnMul: 1,
+      playerDamageMul: 1,
+      dropRateMul: 1,
+      scoreMul: 1,
+      projectileSpeedMul: 1,
+    },
+    challengeRules: {
+      noBombRefill: false,
+    },
     mission: null,
+    challenge: null,
+    synergies: {},
+    upgradeCounts: {},
+    damageNumbers: [],
+    streak: 0,
+    streakTimer: 0,
     meta: null,
     metaRewardGranted: false,
     overclock: 0,
@@ -54,6 +88,13 @@
     settings: {
       screenShake: 1,
       showTouchUi: true,
+      colorblind: false,
+      lowVfx: false,
+      aimAssist: 0.16,
+      quality: "balanced",
+      dashKey: "shift",
+      bombKey: "e",
+      warpKey: "enter",
     },
     touch: {
       enabled: (navigator.maxTouchPoints || 0) > 0,
@@ -157,6 +198,8 @@
       shards: 0,
       bestScore: 0,
       bestWave: 0,
+      dailyBest: {},
+      weaponBest: { pulse: 0, scatter: 0, rail: 0 },
       perks: { hull: 0, cannons: 0, thrusters: 0 },
     };
   }
@@ -170,6 +213,12 @@
         shards: Number(parsed.shards || 0),
         bestScore: Number(parsed.bestScore || 0),
         bestWave: Number(parsed.bestWave || 0),
+        dailyBest: parsed.dailyBest && typeof parsed.dailyBest === "object" ? parsed.dailyBest : {},
+        weaponBest: {
+          pulse: Number(parsed.weaponBest?.pulse || 0),
+          scatter: Number(parsed.weaponBest?.scatter || 0),
+          rail: Number(parsed.weaponBest?.rail || 0),
+        },
         perks: {
           hull: Number(parsed.perks?.hull || 0),
           cannons: Number(parsed.perks?.cannons || 0),
@@ -185,6 +234,84 @@
     try {
       localStorage.setItem("starfall_meta_v1", JSON.stringify(state.meta || defaultMeta()));
     } catch {}
+  }
+
+  function hashString(input) {
+    let h = 2166136261;
+    for (let i = 0; i < input.length; i++) {
+      h ^= input.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  function setRunSeed(seedStr) {
+    const seed = hashString(seedStr);
+    rngState = seed || 1;
+    seededRandom = true;
+    state.runSeed = seedStr;
+  }
+
+  function clearRunSeed() {
+    seededRandom = false;
+    state.runSeed = "";
+  }
+
+  function buildTodayChallenge() {
+    const iso = new Date().toISOString().slice(0, 10);
+    const code = `${DAILY_PREFIX}-${iso}`;
+    const localState = { v: hashString(code) || 1 };
+    const next = () => {
+      localState.v = (1664525 * localState.v + 1013904223) >>> 0;
+      return localState.v / 4294967296;
+    };
+    const pool = [
+      { id: "glass_hull", label: "Glass Hull", apply: () => ((player.maxHp *= 0.78), (player.hp = Math.min(player.hp, player.maxHp))) },
+      { id: "rapid_arsenal", label: "Rapid Arsenal", apply: () => ((player.fireRateMult *= 1.28), (state.runMods.enemySpeedMul *= 1.14)) },
+      { id: "heavy_swarm", label: "Heavy Swarm", apply: () => ((state.runMods.enemyHpMul *= 1.24), (state.runMods.spawnMul *= 1.18)) },
+      { id: "scrap_rain", label: "Scrap Rain", apply: () => ((state.runMods.dropRateMul *= 1.5), (player.missionRewardMult *= 1.2)) },
+      { id: "precision_ops", label: "Precision Ops", apply: () => ((player.damage *= 1.12), (player.critChance = Math.min(0.55, player.critChance + 0.08))) },
+      { id: "tight_window", label: "Tight Window", apply: () => ((state.waveLength = Math.max(20, state.waveLength - 5)), (state.runMods.scoreMul *= 1.2)) },
+      { id: "no_refill", label: "No Bomb Refill", apply: () => (state.challengeRules.noBombRefill = true) },
+    ];
+    const picks = [];
+    const bag = pool.slice();
+    while (picks.length < 3 && bag.length) {
+      const idx = Math.floor(next() * bag.length);
+      picks.push(bag[idx]);
+      bag.splice(idx, 1);
+    }
+    return { code, labels: picks.map((p) => p.label), mutators: picks };
+  }
+
+  function cycleBinding(which) {
+    const key = which === "dash" ? "dashKey" : which === "bomb" ? "bombKey" : "warpKey";
+    const options = {
+      dashKey: ["shift", "q", "mouse"],
+      bombKey: ["e", " ", "r"],
+      warpKey: ["enter", "v", "g"],
+    };
+    const list = options[key];
+    const cur = state.settings[key];
+    const idx = list.indexOf(cur);
+    state.settings[key] = list[(idx + 1) % list.length];
+    pushEvent(`${which} key set to ${displayKey(state.settings[key])}.`);
+  }
+
+  function actionPressed(action) {
+    const k =
+      action === "dash" ? state.settings.dashKey : action === "bomb" ? state.settings.bombKey : state.settings.warpKey;
+    if (k === "mouse") return state.mouseDown || state.keyPressed.has("shift");
+    return state.keyPressed.has(k);
+  }
+
+  function displayKey(k) {
+    if (k === " ") return "Space";
+    if (k === "enter") return "Enter";
+    if (k === "shift") return "Shift";
+    if (k === "mouse") return "Mouse";
+    if (k === "tab") return "Tab";
+    return String(k).toUpperCase();
   }
 
   function wsUrl() {
@@ -458,11 +585,137 @@
     { id: "weapon_scatter", label: "Unlock Scatter weapon", apply: () => ((state.unlockedWeapons.scatter = true), (state.selectedWeapon = "scatter")) },
     { id: "weapon_rail", label: "Unlock Rail weapon", apply: () => ((state.unlockedWeapons.rail = true), (state.selectedWeapon = "rail")) },
   ];
+  const synergyDefs = [
+    {
+      id: "blood_rush",
+      label: "Blood Rush",
+      needs: { lifesteal: 1, firerate: 1 },
+      apply: () => {
+        player.lifesteal = Math.min(0.28, player.lifesteal + 0.05);
+        player.fireRateMult *= 1.12;
+      },
+      note: "Lifesteal and fire rate spike.",
+    },
+    {
+      id: "orbital_forge",
+      label: "Orbital Forge",
+      needs: { drone: 1, range: 1 },
+      apply: () => {
+        player.droneCount = Math.min(6, player.droneCount + 1);
+        player.rangeMult *= 1.14;
+      },
+      note: "Extra drone with wider pressure ring.",
+    },
+    {
+      id: "bombardier",
+      label: "Bombardier Core",
+      needs: { bomb: 1, bomb_cd: 1 },
+      apply: () => {
+        player.bombs += 2;
+        player.bombCdMult *= 0.8;
+      },
+      note: "Bomb stock and cooldown both improved.",
+    },
+    {
+      id: "hunter_rail",
+      label: "Hunter Rail",
+      needs: { boss_hunter: 1, crit: 1 },
+      apply: () => {
+        player.bossDamageMult *= 1.25;
+        player.critMult += 0.4;
+      },
+      note: "Critical boss deletes.",
+    },
+    {
+      id: "phase_glide",
+      label: "Phase Glide",
+      needs: { speed: 1, armor: 1 },
+      apply: () => {
+        player.speed *= 1.12;
+        player.damageReduction = Math.min(0.62, player.damageReduction + 0.08);
+        player.dashCdMult *= 0.85;
+      },
+      note: "Tankier movement with shorter dashes.",
+    },
+  ];
+  const runEventDefs = [
+    { id: "meteor", label: "Meteor Storm", duration: 8.5, mods: { spawnMul: 1.3, enemySpeedMul: 1.08, scoreMul: 1.12 } },
+    { id: "gravity_well", label: "Gravity Well", duration: 9.5, mods: { projectileSpeedMul: 0.8, enemySpeedMul: 0.86, dropRateMul: 1.25 } },
+    { id: "overcharge", label: "Overcharge Field", duration: 8, mods: { playerDamageMul: 1.3, enemyHpMul: 1.12 } },
+    { id: "void_fog", label: "Void Fog", duration: 10, mods: { enemySpeedMul: 1.18, dropRateMul: 1.15, scoreMul: 1.18 } },
+    { id: "calm_lane", label: "Calm Lane", duration: 7, mods: { enemySpeedMul: 0.82, spawnMul: 0.78 } },
+  ];
+  const bossCycle = ["dreadnought", "lancer", "hive", "bulwark"];
   state.meta = loadMeta();
+  state.challenge = buildTodayChallenge();
+
+  function resetRunMods() {
+    state.runMods.enemySpeedMul = 1;
+    state.runMods.enemyHpMul = 1;
+    state.runMods.spawnMul = 1;
+    state.runMods.playerDamageMul = 1;
+    state.runMods.dropRateMul = 1;
+    state.runMods.scoreMul = 1;
+    state.runMods.projectileSpeedMul = 1;
+  }
 
   function pushEvent(msg) {
     state.events.unshift(msg);
     if (state.events.length > MAX_EVENTS) state.events.length = MAX_EVENTS;
+  }
+
+  function applyRunEvent(def) {
+    state.activeEvent = {
+      id: def.id,
+      label: def.label,
+      timeLeft: def.duration,
+      duration: def.duration,
+    };
+    resetRunMods();
+    Object.assign(state.runMods, def.mods);
+    pushEvent(`Anomaly: ${def.label}.`);
+  }
+
+  function maybeTriggerRunEvent() {
+    if (state.mode !== "playing" || state.activeEvent) return;
+    const pool = runEventDefs;
+    const pick = pool[Math.floor(rng.range(0, pool.length))];
+    applyRunEvent(pick);
+  }
+
+  function updateRunEvents(dt) {
+    if (state.mode !== "playing") return;
+    if (state.activeEvent) {
+      state.activeEvent.timeLeft = Math.max(0, state.activeEvent.timeLeft - dt);
+      if (state.activeEvent.timeLeft <= 0) {
+        const name = state.activeEvent.label;
+        state.activeEvent = null;
+        resetRunMods();
+        state.eventClock = rng.range(EVENT_MIN_GAP, EVENT_MAX_GAP);
+        pushEvent(`${name} dissipated.`);
+      }
+      return;
+    }
+    state.eventClock -= dt;
+    if (state.eventClock <= 0) maybeTriggerRunEvent();
+  }
+
+  function checkSynergies() {
+    for (const s of synergyDefs) {
+      if (state.synergies[s.id]) continue;
+      let ok = true;
+      for (const [u, min] of Object.entries(s.needs)) {
+        if ((state.upgradeCounts[u] || 0) < min) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      state.synergies[s.id] = true;
+      s.apply();
+      state.flash = Math.max(state.flash, 0.24);
+      pushEvent(`Synergy online: ${s.label} - ${s.note}`);
+    }
   }
 
   function getModifierForWave(wave) {
@@ -521,8 +774,9 @@
     state.mission = createMissionForWave(state.wave);
     pushEvent(`Wave ${state.wave} started: ${state.waveModifier.name}.`);
     if (state.wave % 3 === 0) {
-      addEnemy("boss");
-      pushEvent("Dreadnought warped in.");
+      const bossType = bossCycle[(state.wave / 3 - 1) % bossCycle.length];
+      addEnemy("boss", { bossType });
+      pushEvent(`${bossType[0].toUpperCase()}${bossType.slice(1)} warped in.`);
     }
   }
 
@@ -568,6 +822,11 @@
     state.meta.shards += shardsEarned;
     state.meta.bestScore = Math.max(state.meta.bestScore, Math.floor(state.score));
     state.meta.bestWave = Math.max(state.meta.bestWave, state.wave);
+    state.meta.weaponBest[state.selectedWeapon] = Math.max(state.meta.weaponBest[state.selectedWeapon] || 0, Math.floor(state.score));
+    if (state.runMode === "daily" && state.challenge?.code) {
+      const code = state.challenge.code;
+      state.meta.dailyBest[code] = Math.max(Number(state.meta.dailyBest[code] || 0), Math.floor(state.score));
+    }
     saveMeta();
     pushEvent(`Recovered ${shardsEarned} star shards.`);
   }
@@ -593,7 +852,16 @@
     state.selectedWeapon = "pulse";
     state.choices = [];
     state.waveModifier = waveModifiers[0];
+    state.activeEvent = null;
+    state.eventClock = rng.range(EVENT_MIN_GAP, EVENT_MAX_GAP);
+    resetRunMods();
+    state.challengeRules.noBombRefill = false;
     state.mission = null;
+    state.synergies = {};
+    state.upgradeCounts = {};
+    state.damageNumbers.length = 0;
+    state.streak = 0;
+    state.streakTimer = 0;
     state.metaRewardGranted = false;
     state.overclock = 0;
     state.freeze = 0;
@@ -652,7 +920,21 @@
     wingman.bombs = 1;
     wingman.bombCd = 0;
     state.unlockedWeapons = { pulse: true, scatter: false, rail: false };
+    if (state.runMode === "daily") {
+      const challenge = buildTodayChallenge();
+      state.challenge = challenge;
+      setRunSeed(challenge.code);
+    } else if (state.runMode === "seeded" && state.runSeed) {
+      setRunSeed(state.runSeed);
+    } else {
+      clearRunSeed();
+      state.runMode = "standard";
+    }
     applyMetaPerks();
+    if (state.runMode === "daily" && state.challenge?.mutators) {
+      for (const mut of state.challenge.mutators) mut.apply();
+      pushEvent(`Daily challenge: ${state.challenge.labels.join(", ")}`);
+    }
     startWavePackage();
   }
 
@@ -693,9 +975,9 @@
       state.pointer.inside = true;
     }
     touch.actions = active;
-    if (active.dash && !touch.prevActions.dash) state.keyPressed.add("shift");
-    if (active.bomb && !touch.prevActions.bomb) state.keyPressed.add("e");
-    if (active.warp && !touch.prevActions.warp) state.keyPressed.add("enter");
+    if (active.dash && !touch.prevActions.dash) state.keyPressed.add(state.settings.dashKey === "mouse" ? "shift" : state.settings.dashKey);
+    if (active.bomb && !touch.prevActions.bomb) state.keyPressed.add(state.settings.bombKey);
+    if (active.warp && !touch.prevActions.warp) state.keyPressed.add(state.settings.warpKey);
     touch.prevActions = active;
   }
 
@@ -809,9 +1091,42 @@
     else if (k === "p" && state.mode === "paused") state.mode = "playing";
     if (state.mode === "menu" && k === "s") state.menuScreen = state.menuScreen === "home" ? "settings" : "home";
     if (state.mode === "menu" && (k === "enter" || k === " ")) resetGame();
+    if (state.mode === "menu" && k === "y") {
+      state.runMode = state.runMode === "daily" ? "standard" : "daily";
+      pushEvent(`Run mode set to ${state.runMode.toUpperCase()}.`);
+    }
+    if (state.mode === "menu" && k === "v") {
+      const seed = prompt("Enter a custom seed code (letters/numbers):", state.runSeed || "");
+      if (seed && seed.trim()) {
+        state.runMode = "seeded";
+        state.runSeed = seed.trim();
+        pushEvent(`Seeded run ready: ${state.runSeed}`);
+      }
+    }
+    if (state.mode === "menu" && k === "b") {
+      const share = state.runMode === "daily" ? state.challenge?.code : state.runSeed || "STANDARD";
+      navigator.clipboard?.writeText(String(share || "STANDARD")).catch(() => {});
+      pushEvent(`Copied run code: ${share || "STANDARD"}`);
+    }
     if (state.mode === "menu" && ["7", "8", "9"].includes(k)) purchaseMetaUpgrade(k);
     if (state.mode === "menu" && k === "j") state.coopJoined = !state.coopJoined;
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "t") state.settings.showTouchUi = !state.settings.showTouchUi;
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "c") state.settings.colorblind = !state.settings.colorblind;
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "l") state.settings.lowVfx = !state.settings.lowVfx;
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "z") {
+      const opts = ["high", "balanced", "performance"];
+      const idx = opts.indexOf(state.settings.quality);
+      state.settings.quality = opts[(idx + 1) % opts.length];
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "u") cycleBinding("dash");
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "i") cycleBinding("bomb");
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "o") cycleBinding("warp");
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "[" || k === "{")) {
+      state.settings.aimAssist = Math.max(0, state.settings.aimAssist - 0.04);
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "]" || k === "}")) {
+      state.settings.aimAssist = Math.min(0.45, state.settings.aimAssist + 0.04);
+    }
     if (state.mode === "menu" && state.menuScreen === "settings" && (k === "-" || k === "_")) {
       state.settings.screenShake = Math.max(0, state.settings.screenShake - 0.1);
     }
@@ -891,34 +1206,45 @@
     return { x: rng.range(20, WIDTH - 20), y: HEIGHT + 40 };
   }
 
-  function addEnemy(kind) {
+  function addEnemy(kind, options = {}) {
     const spawn = kind === "boss" ? { x: WIDTH * 0.5, y: -80 } : randomEdgeSpawn();
     const modifier = state.waveModifier || waveModifiers[0];
+    const run = state.runMods;
+    const bossType = options.bossType || "dreadnought";
     const defs = {
       chaser: { hp: 24, speed: 95, r: 12, color: "#ff5c8a", value: 11 },
       shooter: { hp: 34, speed: 64, r: 14, color: "#ff9757", value: 16, shoot: 2.1 },
       tank: { hp: 95, speed: 42, r: 22, color: "#9a7dff", value: 36 },
       splitter: { hp: 46, speed: 80, r: 15, color: "#64ffc5", value: 18, split: true },
-      boss: { hp: 880, speed: 34, r: 40, color: "#ff4d7f", value: 520, shoot: 1.6, boss: true },
+      boss: {
+        dreadnought: { hp: 880, speed: 34, r: 40, color: "#ff4d7f", value: 520, shoot: 1.6, burst: 2.9 },
+        lancer: { hp: 760, speed: 56, r: 34, color: "#ff9c5d", value: 540, shoot: 0.85, burst: 2.2 },
+        hive: { hp: 980, speed: 30, r: 43, color: "#8df08f", value: 560, shoot: 1.2, burst: 3.6, summon: 3.4 },
+        bulwark: { hp: 1280, speed: 24, r: 46, color: "#b8a4ff", value: 640, shoot: 1.55, burst: 2.1 },
+      },
     };
-    const d = defs[kind];
+    const d = kind === "boss" ? defs.boss[bossType] || defs.boss.dreadnought : defs[kind];
     const baseHp = d.hp + state.wave * (kind === "tank" ? 5 : kind === "boss" ? 34 : 2);
+    const hpMul = kind === "boss" ? run.enemyHpMul * 1.05 : modifier.hpMul * run.enemyHpMul;
+    const speedMul = kind === "boss" ? run.enemySpeedMul : modifier.speedMul * run.enemySpeedMul;
     state.enemies.push({
       kind,
       x: spawn.x,
       y: spawn.y,
       vx: 0,
       vy: 0,
-      hp: baseHp * (kind === "boss" ? 1 : modifier.hpMul),
-      maxHp: baseHp * (kind === "boss" ? 1 : modifier.hpMul),
-      speed: (d.speed + state.wave * 1.7) * (kind === "boss" ? 1 : modifier.speedMul),
+      hp: baseHp * hpMul,
+      maxHp: baseHp * hpMul,
+      speed: (d.speed + state.wave * 1.7) * speedMul,
       r: d.r,
       color: d.color,
       value: d.value,
       shootCd: d.shoot ? rng.range(0.2, d.shoot) : 999,
       split: Boolean(d.split),
-      boss: Boolean(d.boss),
-      burstCd: d.boss ? 2.9 : 999,
+      boss: kind === "boss",
+      bossType: kind === "boss" ? bossType : "",
+      burstCd: kind === "boss" ? d.burst : 999,
+      summonCd: kind === "boss" && d.summon ? d.summon : 999,
       hitFlash: 0,
     });
   }
@@ -926,9 +1252,11 @@
   function spawnWave(dt) {
     state.waveClock += dt;
     const modifier = state.waveModifier || waveModifiers[0];
-    const pacing = Math.max(0.38, (1.3 - state.wave * 0.05) / modifier.spawnMul);
+    const pacing = Math.max(0.32, (1.3 - state.wave * 0.05) / (modifier.spawnMul * state.runMods.spawnMul));
+    const quality = qualityModes[state.settings.quality] || qualityModes.balanced;
+    const enemyCap = quality.enemyCap;
     state.danger += dt;
-    if (state.danger >= pacing && state.enemies.length < 24) {
+    if (state.danger >= pacing && state.enemies.length < enemyCap) {
       state.danger = 0;
       addEnemy("chaser");
       if (state.wave >= 3 && rng.next() < 0.52) addEnemy("shooter");
@@ -939,7 +1267,7 @@
       state.wave += 1;
       state.waveClock = 0;
       state.waveLength = Math.min(46, 26 + state.wave * 2);
-      player.bombs += 1;
+      if (!state.challengeRules.noBombRefill) player.bombs += 1;
       state.flash = 0.35;
       startWavePackage();
     }
@@ -961,8 +1289,14 @@
       tx = best.x;
       ty = best.y;
     }
-    const dx = tx - player.x;
-    const dy = ty - player.y;
+    let dx = tx - player.x;
+    let dy = ty - player.y;
+    if (state.pointer.inside && state.enemies.length > 0 && state.settings.aimAssist > 0) {
+      const near = getNearestEnemyDirection(player.x, player.y, player.aimAngle);
+      const assist = state.settings.aimAssist;
+      dx = dx * (1 - assist) + near.dx * Math.hypot(dx, dy) * assist;
+      dy = dy * (1 - assist) + near.dy * Math.hypot(dx, dy) * assist;
+    }
     const dist = Math.hypot(dx, dy) || 1;
     player.aimAngle = Math.atan2(dy, dx);
     return { dx: dx / dist, dy: dy / dist };
@@ -999,8 +1333,8 @@
     for (let i = 0; i < shots; i++) {
       const t = shots === 1 ? 0 : i / (shots - 1) - 0.5;
       const ang = Math.atan2(dir.dy, dir.dx) + t * w.spread * 2;
-      const vx = Math.cos(ang) * w.speed * player.projectileSpeedMult;
-      const vy = Math.sin(ang) * w.speed * player.projectileSpeedMult;
+      const vx = Math.cos(ang) * w.speed * player.projectileSpeedMult * state.runMods.projectileSpeedMul;
+      const vy = Math.sin(ang) * w.speed * player.projectileSpeedMult * state.runMods.projectileSpeedMul;
       state.projectiles.push({
         owner: "player",
         x: player.x + Math.cos(ang) * (player.r + 4),
@@ -1009,7 +1343,7 @@
         vy,
         r: (w.name === "Scatter" ? 4 : 5) * player.projectileSizeMult,
         life: 1.15 * player.rangeMult,
-        damage: player.damage * w.damageMult,
+        damage: player.damage * w.damageMult * state.runMods.playerDamageMul,
         color: w.color,
         pierce: (w.pierce || 1) + player.bonusPierce,
       });
@@ -1017,7 +1351,10 @@
   }
 
   function spawnParticles(x, y, color, n, force = 130) {
-    for (let i = 0; i < n; i++) {
+    const quality = qualityModes[state.settings.quality] || qualityModes.balanced;
+    const vfxMul = state.settings.lowVfx ? 0.25 : quality.particleMul;
+    const count = Math.max(1, Math.round(n * vfxMul));
+    for (let i = 0; i < count; i++) {
       const a = rng.range(0, TAU);
       const s = rng.range(force * 0.35, force);
       state.particles.push({
@@ -1061,7 +1398,7 @@
   function maybeDrop(x, y) {
     const roll = rng.next();
     const baseDropChance = state.mission && !state.mission.complete && state.mission.id === "collector" ? 0.28 : 0.16;
-    const dropChance = Math.min(0.62, baseDropChance * player.dropRateMult);
+    const dropChance = Math.min(0.62, baseDropChance * player.dropRateMult * state.runMods.dropRateMul);
     if (roll > dropChance) return;
     const type = roll < 0.06 ? "heal" : roll < 0.11 ? "overclock" : "freeze";
     state.drops.push({ x, y, r: 10, type, life: 13 });
@@ -1070,8 +1407,11 @@
   function rewardKill(enemy) {
     const modifier = state.waveModifier || waveModifiers[0];
     state.kills += 1;
+    state.streak += 1;
+    state.streakTimer = 2.3;
     const comboBoost = 1 + Math.min(2.4, state.combo * 0.07);
-    const scoreGain = enemy.value * comboBoost * (state.overclock > 0 ? 1.3 : 1) * modifier.scoreMul;
+    const streakBonus = 1 + Math.min(0.8, state.streak * 0.015);
+    const scoreGain = enemy.value * comboBoost * streakBonus * (state.overclock > 0 ? 1.3 : 1) * modifier.scoreMul * state.runMods.scoreMul;
     state.score += scoreGain;
     player.scrap += Math.ceil(enemy.value * 0.35);
     player.xp += enemy.value * 0.55;
@@ -1087,8 +1427,9 @@
       player.bombs += 1;
       player.shield += 25;
       state.flash = Math.max(state.flash, 0.36);
-      pushEvent("Dreadnought destroyed: +1 bomb, +25 shield.");
+      pushEvent(`${enemy.bossType || "Boss"} destroyed: +1 bomb, +25 shield.`);
     }
+    if (state.streak > 0 && state.streak % 25 === 0) pushEvent(`Streak ${state.streak}! Score bonus increased.`);
   }
 
   function enemyDie(enemyIndex) {
@@ -1147,8 +1488,22 @@
     const choice = state.choices[i];
     if (!choice) return;
     choice.apply();
+    state.upgradeCounts[choice.id] = (state.upgradeCounts[choice.id] || 0) + 1;
+    checkSynergies();
     state.mode = "playing";
     state.choices = [];
+  }
+
+  function spawnDamageNumber(x, y, amount, color) {
+    if (state.settings.lowVfx) return;
+    state.damageNumbers.push({
+      x,
+      y,
+      value: Math.round(amount),
+      life: 0.6,
+      color,
+    });
+    if (state.damageNumbers.length > 60) state.damageNumbers.shift();
   }
 
   function activateBomb() {
@@ -1245,7 +1600,7 @@
     getAimDirection();
     player.vx += (ax - player.vx) * Math.min(1, dt * 14);
     player.vy += (ay - player.vy) * Math.min(1, dt * 14);
-    if (state.keyPressed.has("shift") && player.dashCd <= 0) {
+    if (actionPressed("dash") && player.dashCd <= 0) {
       const dir = getAimDirection();
       player.vx += dir.dx * player.dashPower;
       player.vy += dir.dy * player.dashPower;
@@ -1266,8 +1621,8 @@
     player.contactDamageCd = Math.max(0, player.contactDamageCd - dt);
     if (player.regen > 0) player.hp = Math.min(player.maxHp, player.hp + player.regen * dt);
     shoot();
-    if (state.keyPressed.has("e")) activateBomb();
-    if (state.keyPressed.has("enter")) forceNextWave(true);
+    if (actionPressed("bomb")) activateBomb();
+    if (actionPressed("warp")) forceNextWave(true);
   }
 
   function updateWingman(dt) {
@@ -1325,6 +1680,7 @@
           const bossMul = e.boss ? player.bossDamageMult : 1;
           const dmg = p.damage * (crit ? player.critMult : 1) * bossMul;
           e.hp -= dmg;
+          spawnDamageNumber(e.x, e.y - 10, dmg, crit ? "#ffe38a" : "#e5f0ff");
           if (p.owner !== "wingman" && player.lifesteal > 0) {
             player.hp = Math.min(player.maxHp, player.hp + dmg * player.lifesteal);
           }
@@ -1400,8 +1756,8 @@
           state.enemyProjectiles.push({
             x: e.x,
             y: e.y,
-            vx: ux * 240,
-            vy: uy * 240,
+            vx: ux * 240 * state.runMods.projectileSpeedMul,
+            vy: uy * 240 * state.runMods.projectileSpeedMul,
             r: 6,
             life: 4,
             damage: 8 + state.wave * 0.6,
@@ -1411,34 +1767,110 @@
       if (e.boss) {
         e.shootCd -= dt * freezeMul;
         e.burstCd -= dt * freezeMul;
-        if (e.shootCd <= 0) {
-          e.shootCd = 1.05;
-          state.enemyProjectiles.push({
-            x: e.x,
-            y: e.y,
-            vx: ux * 280,
-            vy: uy * 280,
-            r: 8,
-            life: 5,
-            damage: 11 + state.wave * 0.8,
-          });
-        }
-        if (e.burstCd <= 0) {
-          e.burstCd = 3.25;
-          const count = 12;
-          for (let i = 0; i < count; i++) {
-            const a = (TAU / count) * i + state.time * 0.5;
+        const pMul = state.runMods.projectileSpeedMul;
+        if (e.bossType === "lancer") {
+          if (e.shootCd <= 0) {
+            e.shootCd = 0.72;
+            for (let i = -1; i <= 1; i++) {
+              const a = Math.atan2(uy, ux) + i * 0.16;
+              state.enemyProjectiles.push({
+                x: e.x,
+                y: e.y,
+                vx: Math.cos(a) * 360 * pMul,
+                vy: Math.sin(a) * 360 * pMul,
+                r: 6,
+                life: 3.6,
+                damage: 9 + state.wave * 0.75,
+              });
+            }
+          }
+          if (e.burstCd <= 0) {
+            e.burstCd = 2.1;
+            e.vx += ux * 280;
+            e.vy += uy * 280;
+            spawnParticles(e.x, e.y, "#ffd6a8", 18, 180);
+          }
+        } else if (e.bossType === "hive") {
+          if (e.shootCd <= 0) {
+            e.shootCd = 1.18;
+            const count = 8;
+            for (let i = 0; i < count; i++) {
+              const a = (TAU / count) * i + state.time * 0.35;
+              state.enemyProjectiles.push({
+                x: e.x,
+                y: e.y,
+                vx: Math.cos(a) * 210 * pMul,
+                vy: Math.sin(a) * 210 * pMul,
+                r: 7,
+                life: 4.5,
+                damage: 7 + state.wave * 0.7,
+              });
+            }
+          }
+          e.summonCd -= dt * freezeMul;
+          if (e.summonCd <= 0) {
+            e.summonCd = 3.8;
+            addEnemy(rng.next() < 0.5 ? "chaser" : "splitter");
+          }
+        } else if (e.bossType === "bulwark") {
+          if (e.shootCd <= 0) {
+            e.shootCd = 1.45;
             state.enemyProjectiles.push({
               x: e.x,
               y: e.y,
-              vx: Math.cos(a) * 230,
-              vy: Math.sin(a) * 230,
-              r: 7,
-              life: 4.2,
-              damage: 7 + state.wave * 0.65,
+              vx: ux * 250 * pMul,
+              vy: uy * 250 * pMul,
+              r: 10,
+              life: 4.8,
+              damage: 13 + state.wave * 0.95,
             });
           }
-          state.flash = Math.max(state.flash, 0.14);
+          if (e.burstCd <= 0) {
+            e.burstCd = 2.35;
+            const count = 14;
+            for (let i = 0; i < count; i++) {
+              const a = (TAU / count) * i + state.time;
+              state.enemyProjectiles.push({
+                x: e.x,
+                y: e.y,
+                vx: Math.cos(a) * 190 * pMul,
+                vy: Math.sin(a) * 190 * pMul,
+                r: 7,
+                life: 4.2,
+                damage: 7 + state.wave * 0.6,
+              });
+            }
+          }
+        } else {
+          if (e.shootCd <= 0) {
+            e.shootCd = 1.05;
+            state.enemyProjectiles.push({
+              x: e.x,
+              y: e.y,
+              vx: ux * 280 * pMul,
+              vy: uy * 280 * pMul,
+              r: 8,
+              life: 5,
+              damage: 11 + state.wave * 0.8,
+            });
+          }
+          if (e.burstCd <= 0) {
+            e.burstCd = 3.25;
+            const count = 12;
+            for (let i = 0; i < count; i++) {
+              const a = (TAU / count) * i + state.time * 0.5;
+              state.enemyProjectiles.push({
+                x: e.x,
+                y: e.y,
+                vx: Math.cos(a) * 230 * pMul,
+                vy: Math.sin(a) * 230 * pMul,
+                r: 7,
+                life: 4.2,
+                damage: 7 + state.wave * 0.65,
+              });
+            }
+            state.flash = Math.max(state.flash, 0.14);
+          }
         }
       }
       if (d < e.r + player.r) {
@@ -1527,10 +1959,18 @@
     if (gameplayActive) {
       state.overclock = Math.max(0, state.overclock - dt);
       state.freeze = Math.max(0, state.freeze - dt);
+      state.streakTimer = Math.max(0, state.streakTimer - dt);
+      if (state.streakTimer <= 0) state.streak = 0;
       if (state.mission && !state.mission.complete && state.mission.id === "survive") {
         state.mission.progress = Math.min(state.mission.target, state.mission.progress + dt);
         if (state.mission.progress >= state.mission.target) applyMissionReward();
       }
+    }
+    for (let i = state.damageNumbers.length - 1; i >= 0; i--) {
+      const n = state.damageNumbers[i];
+      n.y -= dt * 42;
+      n.life -= dt;
+      if (n.life <= 0) state.damageNumbers.splice(i, 1);
     }
   }
 
@@ -1562,6 +2002,7 @@
       updateParticles(dt);
     }
     updateTimers(dt, gameplayActive);
+    updateRunEvents(dt);
     if (state.net.mode === "host") {
       state.net.sendTimer += dt;
       if (state.net.sendTimer >= 0.05) {
@@ -1611,6 +2052,21 @@
     ctx.restore();
   }
 
+  function adaptColor(c) {
+    if (!state.settings.colorblind) return c;
+    const map = {
+      "#ff5c8a": "#ffb000",
+      "#ff9757": "#4da6ff",
+      "#9a7dff": "#00b894",
+      "#64ffc5": "#ffd166",
+      "#ff4d7f": "#e17055",
+      "#8df08f": "#3dc1d3",
+      "#b8a4ff": "#2ecc71",
+      "#ff9c5d": "#54a0ff",
+    };
+    return map[c] || c;
+  }
+
   function drawWingman() {
     if (!state.coopJoined) return;
     ctx.save();
@@ -1638,7 +2094,7 @@
     ctx.save();
     ctx.translate(sx, sy);
     for (const d of state.drops) {
-      ctx.fillStyle = d.type === "heal" ? "#93ffb7" : d.type === "overclock" ? "#ffe197" : "#9db0ff";
+      ctx.fillStyle = d.type === "heal" ? adaptColor("#93ffb7") : d.type === "overclock" ? adaptColor("#ffe197") : adaptColor("#9db0ff");
       ctx.beginPath();
       ctx.arc(d.x, d.y, d.r, 0, TAU);
       ctx.fill();
@@ -1647,7 +2103,7 @@
       ctx.stroke();
     }
     for (const p of state.projectiles) {
-      ctx.fillStyle = p.color;
+      ctx.fillStyle = adaptColor(p.color);
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, TAU);
       ctx.fill();
@@ -1659,7 +2115,7 @@
       ctx.fill();
     }
     for (const e of state.enemies) {
-      ctx.fillStyle = e.hitFlash > 0 ? "#fff2d5" : e.color;
+      ctx.fillStyle = e.hitFlash > 0 ? "#fff2d5" : adaptColor(e.color);
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.r, 0, TAU);
       ctx.fill();
@@ -1681,11 +2137,18 @@
     drawPlayer();
     drawWingman();
     for (const p of state.particles) {
-      ctx.fillStyle = p.color;
+      ctx.fillStyle = adaptColor(p.color);
       ctx.globalAlpha = Math.max(0, p.life * 2);
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, TAU);
       ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    for (const n of state.damageNumbers) {
+      ctx.globalAlpha = Math.max(0, n.life / 0.6);
+      ctx.fillStyle = adaptColor(n.color);
+      ctx.font = "16px Trebuchet MS";
+      ctx.fillText(String(n.value), n.x, n.y);
       ctx.globalAlpha = 1;
     }
     ctx.restore();
@@ -1701,6 +2164,9 @@
     ctx.fillText(`Kills ${state.kills}`, 30, 89);
     ctx.fillStyle = "#f1f7ff";
     ctx.fillText(`Weapon ${weaponDefs[state.selectedWeapon].name}`, 30, 114);
+    ctx.font = "14px Trebuchet MS";
+    ctx.fillStyle = "#b9cbef";
+    ctx.fillText(`Mode ${state.runMode.toUpperCase()}`, 250, 38);
 
     const hpw = 260;
     ctx.fillStyle = "rgba(0,0,0,0.55)";
@@ -1725,9 +2191,9 @@
     ctx.fillStyle = "#f7d8ff";
     ctx.fillText(`Combo x${(1 + Math.max(0, state.combo) * 0.07).toFixed(2)}`, WIDTH - 306, 64);
     ctx.fillStyle = "#cedaff";
-    ctx.fillText(`Bombs ${player.bombs} (E)`, WIDTH - 306, 89);
-    ctx.fillText(`Dash ${(player.dashCd <= 0 ? "Ready" : player.dashCd.toFixed(1) + "s")} (Shift)`, WIDTH - 306, 114);
-    ctx.fillText(`Warp ${(state.waveSkipCd <= 0 ? "Ready" : state.waveSkipCd.toFixed(1) + "s")} (Enter)`, WIDTH - 306, 139);
+    ctx.fillText(`Bombs ${player.bombs} (${displayKey(state.settings.bombKey)})`, WIDTH - 306, 89);
+    ctx.fillText(`Dash ${(player.dashCd <= 0 ? "Ready" : player.dashCd.toFixed(1) + "s")} (${displayKey(state.settings.dashKey)})`, WIDTH - 306, 114);
+    ctx.fillText(`Warp ${(state.waveSkipCd <= 0 ? "Ready" : state.waveSkipCd.toFixed(1) + "s")} (${displayKey(state.settings.warpKey)})`, WIDTH - 306, 139);
 
     ctx.fillStyle = "rgba(8, 12, 24, 0.7)";
     ctx.fillRect(16, 144, 350, 84);
@@ -1740,10 +2206,31 @@
       ctx.fillText(`${state.mission.label}`, 30, 198);
       ctx.fillText(`Progress ${prog} / ${target}`, 30, 222);
     }
+    if (state.activeEvent) {
+      ctx.fillStyle = "#ffd6ab";
+      ctx.fillText(`Anomaly: ${state.activeEvent.label} ${state.activeEvent.timeLeft.toFixed(1)}s`, 390, 168);
+    }
+    if (state.streak > 0) {
+      ctx.fillStyle = "#ffe9a8";
+      ctx.fillText(`Streak x${state.streak}`, 390, 195);
+    }
+    const synergyNames = Object.keys(state.synergies)
+      .slice(0, 2)
+      .map((id) => synergyDefs.find((s) => s.id === id)?.label || id);
+    if (synergyNames.length) {
+      ctx.fillStyle = "#9ff6d7";
+      ctx.fillText(`Synergy: ${synergyNames.join(" + ")}`, 390, 222);
+    }
 
     ctx.fillStyle = "#a8b8d8";
     ctx.font = "14px Trebuchet MS";
-    ctx.fillText("Move WASD/Arrows | Auto-fire | Aim mouse | E bomb | Enter warp | Pause P | Fullscreen F", 18, HEIGHT - 20);
+    ctx.fillText(
+      `Move WASD/Arrows | Auto-fire | Aim mouse | Bomb ${displayKey(state.settings.bombKey)} | Warp ${displayKey(
+        state.settings.warpKey
+      )} | Pause P | Fullscreen F`,
+      18,
+      HEIGHT - 20
+    );
     if (state.coopJoined) {
       ctx.fillStyle = "#8cf8d7";
       ctx.fillText("Co-op P2: IJKL move | O dash | U bomb | Auto-aim fire", 18, HEIGHT - 38);
@@ -1772,19 +2259,32 @@
     ctx.fillText(`Menu: ${state.menuScreen === "home" ? "Home" : "Settings"} (S to switch)`, WIDTH * 0.34, HEIGHT * 0.27);
 
     ctx.fillStyle = "rgba(12, 21, 44, 0.88)";
-    ctx.fillRect(WIDTH * 0.1, HEIGHT * 0.32, WIDTH * 0.8, HEIGHT * 0.34);
+    ctx.fillRect(WIDTH * 0.1, HEIGHT * 0.3, WIDTH * 0.8, HEIGHT * 0.44);
     ctx.strokeStyle = "#89b8ff";
     ctx.lineWidth = 2;
-    ctx.strokeRect(WIDTH * 0.1, HEIGHT * 0.32, WIDTH * 0.8, HEIGHT * 0.34);
+    ctx.strokeRect(WIDTH * 0.1, HEIGHT * 0.3, WIDTH * 0.8, HEIGHT * 0.44);
 
     ctx.fillStyle = "#e7f0ff";
     ctx.font = "22px Trebuchet MS";
     if (state.menuScreen === "home") {
-      ctx.fillText("WASD move | Mouse aim | Auto-fire always on | Shift dash | E bomb | Enter warp", WIDTH * 0.13, HEIGHT * 0.39);
+      ctx.fillText(
+        `WASD move | Mouse aim | Auto-fire always on | Dash ${displayKey(state.settings.dashKey)} | Bomb ${displayKey(
+          state.settings.bombKey
+        )} | Warp ${displayKey(state.settings.warpKey)}`,
+        WIDTH * 0.13,
+        HEIGHT * 0.39
+      );
       ctx.fillText(`Co-op ${state.coopJoined ? "ON" : "OFF"} (J) | P2: IJKL move, O dash, U bomb`, WIDTH * 0.13, HEIGHT * 0.44);
       ctx.fillText("Online: H host room | G join room | X disconnect", WIDTH * 0.13, HEIGHT * 0.49);
-      ctx.fillText("Mobile: on-screen joystick/buttons available", WIDTH * 0.13, HEIGHT * 0.54);
-      ctx.fillText(`Shards ${state.meta?.shards || 0} | Best ${state.meta?.bestScore || 0} pts wave ${state.meta?.bestWave || 0}`, WIDTH * 0.13, HEIGHT * 0.59);
+      ctx.fillText(`Run mode: ${state.runMode.toUpperCase()} (Y toggle daily, V seed, B copy code)`, WIDTH * 0.13, HEIGHT * 0.54);
+      if (state.challenge?.code) {
+        ctx.fillText(`Daily ${state.challenge.code} | ${state.challenge.labels.join(" / ")}`, WIDTH * 0.13, HEIGHT * 0.59);
+      }
+      ctx.fillText(
+        `Shards ${state.meta?.shards || 0} | Best ${state.meta?.bestScore || 0} pts wave ${state.meta?.bestWave || 0}`,
+        WIDTH * 0.13,
+        HEIGHT * 0.64
+      );
 
       ctx.fillStyle = "rgba(255, 238, 168, 0.95)";
       ctx.fillRect(btn.start.x, btn.start.y, btn.start.w, btn.start.h);
@@ -1800,9 +2300,22 @@
     } else {
       ctx.fillText(`Touch UI: ${state.settings.showTouchUi ? "ON" : "OFF"} (press T)`, WIDTH * 0.13, HEIGHT * 0.39);
       ctx.fillText(`Screen shake: ${state.settings.screenShake.toFixed(1)} (press - / +)`, WIDTH * 0.13, HEIGHT * 0.44);
-      ctx.fillText(`Permanent upgrades: 7 Hull (${getMetaUpgradeCost(state.meta?.perks.hull || 0)})`, WIDTH * 0.13, HEIGHT * 0.49);
-      ctx.fillText(`8 Cannons (${getMetaUpgradeCost(state.meta?.perks.cannons || 0)}) | 9 Thrusters (${getMetaUpgradeCost(state.meta?.perks.thrusters || 0)})`, WIDTH * 0.13, HEIGHT * 0.54);
-      ctx.fillText("Tip: Keep touch UI ON for phones/tablets.", WIDTH * 0.13, HEIGHT * 0.59);
+      ctx.fillText(`Quality: ${(qualityModes[state.settings.quality] || qualityModes.balanced).label} (Z)`, WIDTH * 0.13, HEIGHT * 0.49);
+      ctx.fillText(`Low VFX: ${state.settings.lowVfx ? "ON" : "OFF"} (L) | Colorblind: ${state.settings.colorblind ? "ON" : "OFF"} (C)`, WIDTH * 0.13, HEIGHT * 0.54);
+      ctx.fillText(`Aim assist: ${(state.settings.aimAssist * 100).toFixed(0)}% ([ / ])`, WIDTH * 0.13, HEIGHT * 0.58);
+      ctx.fillText(
+        `Keys: Dash ${displayKey(state.settings.dashKey)}(U), Bomb ${displayKey(state.settings.bombKey)}(I), Warp ${displayKey(
+          state.settings.warpKey
+        )}(O)`,
+        WIDTH * 0.13,
+        HEIGHT * 0.63
+      );
+      ctx.fillText(`Permanent upgrades: 7 Hull (${getMetaUpgradeCost(state.meta?.perks.hull || 0)})`, WIDTH * 0.13, HEIGHT * 0.67);
+      ctx.fillText(
+        `8 Cannons (${getMetaUpgradeCost(state.meta?.perks.cannons || 0)}) | 9 Thrusters (${getMetaUpgradeCost(state.meta?.perks.thrusters || 0)})`,
+        WIDTH * 0.13,
+        HEIGHT * 0.71
+      );
 
       ctx.fillStyle = "rgba(143, 190, 255, 0.95)";
       ctx.fillRect(btn.back.x, btn.back.y, btn.back.w, btn.back.h);
@@ -1884,6 +2397,13 @@
       WIDTH * 0.2,
       HEIGHT * 0.65
     );
+    ctx.fillText(
+      `Best ${weaponDefs[state.selectedWeapon].name}: ${state.meta?.weaponBest?.[state.selectedWeapon] || 0}   Daily Best: ${
+        state.meta?.dailyBest?.[state.challenge?.code || ""] || 0
+      }`,
+      WIDTH * 0.2,
+      HEIGHT * 0.7
+    );
   }
 
   function drawOnlineOverlay() {
@@ -1963,6 +2483,8 @@
     const payload = {
       coordinateSystem: "origin=(0,0) top-left; +x right; +y down; units are canvas pixels",
       mode: state.mode,
+      runMode: state.runMode,
+      runSeed: state.runSeed,
       wave: state.wave,
       waveProgressSeconds: Number(state.waveClock.toFixed(2)),
       waveModifier: state.waveModifier ? state.waveModifier.id : "standard",
@@ -2034,11 +2556,22 @@
             complete: state.mission.complete,
           }
         : null,
+      activeEvent: state.activeEvent
+        ? {
+            id: state.activeEvent.id,
+            label: state.activeEvent.label,
+            timeLeft: Number(state.activeEvent.timeLeft.toFixed(2)),
+          }
+        : null,
+      synergies: Object.keys(state.synergies),
+      streak: state.streak,
       unlockedWeapons: state.unlockedWeapons,
       meta: {
         shards: state.meta?.shards || 0,
         bestScore: state.meta?.bestScore || 0,
         bestWave: state.meta?.bestWave || 0,
+        dailyBestToday: state.meta?.dailyBest?.[state.challenge?.code || ""] || 0,
+        weaponBest: state.meta?.weaponBest || { pulse: 0, scatter: 0, rail: 0 },
         perks: state.meta?.perks || { hull: 0, cannons: 0, thrusters: 0 },
       },
       score: Number(state.score.toFixed(1)),
