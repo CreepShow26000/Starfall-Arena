@@ -16,6 +16,7 @@
   };
   let seededRandom = false;
   let rngState = 0;
+  const menuScreens = ["home", "settings", "codex"];
 
   function defaultSettings() {
     return {
@@ -90,6 +91,7 @@
     challenge: null,
     synergies: {},
     upgradeCounts: {},
+    bannedUpgrades: {},
     damageNumbers: [],
     streak: 0,
     streakTimer: 0,
@@ -193,6 +195,17 @@
     droneCount: 0,
     multishot: 0,
     regen: 0,
+    shieldRegen: 0,
+    overclockBonusTime: 0,
+    freezeBonusTime: 0,
+    bombDamageMult: 1,
+    bombRadiusMult: 1,
+    dashShockwave: 0,
+    wingmanDamageMult: 1,
+    salvageMult: 1,
+    streakGuard: 0,
+    rerolls: 1,
+    banishes: 1,
     contactDamageCd: 0,
     alive: true,
   };
@@ -748,6 +761,18 @@
     { id: "combo_focus", label: "Combo lasts longer", apply: () => ((player.comboDuration += 0.8), (player.comboDecayMul *= 0.86)) },
     { id: "weapon_scatter", label: "Unlock Scatter weapon", apply: () => ((state.unlockedWeapons.scatter = true), (state.selectedWeapon = "scatter")) },
     { id: "weapon_rail", label: "Unlock Rail weapon", apply: () => ((state.unlockedWeapons.rail = true), (state.selectedWeapon = "rail")) },
+    { id: "crit_power", label: "+35% crit damage", apply: () => (player.critMult += 0.35) },
+    { id: "overclock_core", label: "Overclock lasts longer", apply: () => (player.overclockBonusTime += 2.2) },
+    { id: "cryo_reserve", label: "Cryo lasts longer", apply: () => (player.freezeBonusTime += 1.4) },
+    { id: "shield_regen", label: "+1.4 shield regen/s", apply: () => (player.shieldRegen += 1.4) },
+    { id: "bomb_payload", label: "+28% bomb damage", apply: () => (player.bombDamageMult *= 1.28) },
+    { id: "bomb_radius", label: "+22% bomb radius", apply: () => (player.bombRadiusMult *= 1.22) },
+    { id: "dash_burst", label: "Dash emits shockwave", apply: () => (player.dashShockwave += 42) },
+    { id: "wingman_arsenal", label: "Wingman +28% damage", apply: () => (player.wingmanDamageMult *= 1.28) },
+    { id: "streak_guard", label: "Streak grants shield", apply: () => (player.streakGuard += 1) },
+    { id: "salvage_ops", label: "+25% salvage gains", apply: () => (player.salvageMult *= 1.25) },
+    { id: "reroll", label: "+1 reroll token", apply: () => (player.rerolls += 1) },
+    { id: "banish", label: "+1 banish token", apply: () => (player.banishes += 1) },
   ];
   const synergyDefs = [
     {
@@ -800,6 +825,36 @@
         player.dashCdMult *= 0.85;
       },
       note: "Tankier movement with shorter dashes.",
+    },
+    {
+      id: "event_harvester",
+      label: "Event Harvester",
+      needs: { overclock_core: 1, cryo_reserve: 1 },
+      apply: () => {
+        state.runMods.scoreMul *= 1.1;
+        player.missionRewardMult *= 1.1;
+      },
+      note: "Event windows become more rewarding.",
+    },
+    {
+      id: "shock_spear",
+      label: "Shock Spear",
+      needs: { dash_burst: 1, projectile_speed: 1 },
+      apply: () => {
+        player.dashShockwave += 60;
+        player.projectileSpeedMult *= 1.15;
+      },
+      note: "Dash and projectile aggression spike.",
+    },
+    {
+      id: "guardian_loop",
+      label: "Guardian Loop",
+      needs: { shield_regen: 1, streak_guard: 1 },
+      apply: () => {
+        player.shieldRegen += 1.2;
+        player.shield += 20;
+      },
+      note: "Sustain loop enabled.",
     },
   ];
   const runEventDefs = [
@@ -1024,6 +1079,7 @@
     state.mission = null;
     state.synergies = {};
     state.upgradeCounts = {};
+    state.bannedUpgrades = {};
     state.damageNumbers.length = 0;
     state.streak = 0;
     state.streakTimer = 0;
@@ -1072,6 +1128,17 @@
     player.droneCount = 0;
     player.multishot = 0;
     player.regen = 0;
+    player.shieldRegen = 0;
+    player.overclockBonusTime = 0;
+    player.freezeBonusTime = 0;
+    player.bombDamageMult = 1;
+    player.bombRadiusMult = 1;
+    player.dashShockwave = 0;
+    player.wingmanDamageMult = 1;
+    player.salvageMult = 1;
+    player.streakGuard = 0;
+    player.rerolls = 1;
+    player.banishes = 1;
     player.contactDamageCd = 0;
     player.alive = true;
     wingman.x = WIDTH * 0.5 + 70;
@@ -1173,6 +1240,7 @@
   function menuButtonRects() {
     const start = { x: WIDTH * 0.34, y: HEIGHT * 0.72, w: WIDTH * 0.32, h: 58 };
     const settings = { x: WIDTH * 0.34, y: HEIGHT * 0.8, w: WIDTH * 0.32, h: 46 };
+    const codex = { x: WIDTH * 0.34, y: HEIGHT * 0.86, w: WIDTH * 0.32, h: 40 };
     const back = { x: WIDTH * 0.34, y: HEIGHT * 0.78, w: WIDTH * 0.32, h: 52 };
     const daily = { x: WIDTH * 0.12, y: HEIGHT * 0.665, w: WIDTH * 0.2, h: 36 };
     const seed = { x: WIDTH * 0.34, y: HEIGHT * 0.665, w: WIDTH * 0.2, h: 36 };
@@ -1194,6 +1262,7 @@
     return {
       start,
       settings,
+      codex,
       back,
       daily,
       seed,
@@ -1225,12 +1294,13 @@
     if (state.menuScreen === "home") {
       if (pointInRect(pt, btn.start)) resetGame();
       else if (pointInRect(pt, btn.settings)) state.menuScreen = "settings";
+      else if (pointInRect(pt, btn.codex)) state.menuScreen = "codex";
       else if (pointInRect(pt, btn.daily)) toggleRunMode();
       else if (pointInRect(pt, btn.seed)) setCustomSeedFromPrompt();
       else if (pointInRect(pt, btn.copy)) copyRunCode();
       else if (pointInRect(pt, btn.coop)) state.coopJoined = !state.coopJoined;
       else return false;
-    } else {
+    } else if (state.menuScreen === "settings") {
       if (pointInRect(pt, btn.back)) state.menuScreen = "home";
       else if (pointInRect(pt, btn.touchToggle)) {
         state.settings.showTouchUi = !state.settings.showTouchUi;
@@ -1256,6 +1326,9 @@
       else if (pointInRect(pt, btn.bindWarp)) cycleBinding("warp");
       else if (pointInRect(pt, btn.preset)) cycleAccessibilityPreset();
       else if (pointInRect(pt, btn.resetSettings)) resetSettingsDefaults();
+      else return false;
+    } else {
+      if (pointInRect(pt, btn.back)) state.menuScreen = "home";
       else return false;
     }
     return true;
@@ -1356,9 +1429,13 @@
     }
     if (k === "p" && state.mode === "playing") state.mode = "paused";
     else if (k === "p" && state.mode === "paused") state.mode = "playing";
-    if (state.mode === "menu" && k === "s") state.menuScreen = state.menuScreen === "home" ? "settings" : "home";
+    if (state.mode === "menu" && k === "s") {
+      const idx = menuScreens.indexOf(state.menuScreen);
+      state.menuScreen = menuScreens[(idx + 1 + menuScreens.length) % menuScreens.length];
+    }
     if (state.mode === "menu" && (k === "enter" || k === " ")) resetGame();
     if (state.mode === "menu" && k === "y") toggleRunMode();
+    if (state.mode === "menu" && k === "k") state.menuScreen = "codex";
     if (state.mode === "menu" && k === "v") setCustomSeedFromPrompt();
     if (state.mode === "menu" && k === "b") copyRunCode();
     if (state.mode === "menu" && ["7", "8", "9"].includes(k)) purchaseMetaUpgrade(k);
@@ -1393,6 +1470,8 @@
     if (k === "x" && state.net.mode !== "offline") resetNetSession();
     if (state.mode === "gameover" && k === "r") resetGame();
     if (state.mode === "levelup" && ["1", "2", "3"].includes(k)) pickUpgrade(Number(k) - 1);
+    if (state.mode === "levelup" && k === "4") rerollChoices(false);
+    if (state.mode === "levelup" && ["5", "6", "7"].includes(k)) banishChoice(Number(k) - 5);
     if (["1", "2", "3"].includes(k) && state.mode === "playing") {
       const map = { "1": "pulse", "2": "scatter", "3": "rail" };
       const next = map[k];
@@ -1411,6 +1490,21 @@
     }
     if (state.mode === "levelup") {
       const pt = toCanvasCoords(evt);
+      const rerollBtn = { x: WIDTH * 0.25, y: HEIGHT * 0.78, w: 220, h: 50 };
+      if (pt.x >= rerollBtn.x && pt.x <= rerollBtn.x + rerollBtn.w && pt.y >= rerollBtn.y && pt.y <= rerollBtn.y + rerollBtn.h) {
+        rerollChoices(false);
+        return;
+      }
+      for (let i = 0; i < 3; i++) {
+        const x = WIDTH * 0.18 + i * 300 + 250 - 58;
+        const y = HEIGHT * 0.31 + 10;
+        const w = 40;
+        const h = 30;
+        if (pt.x >= x && pt.x <= x + w && pt.y >= y && pt.y <= y + h) {
+          banishChoice(i);
+          return;
+        }
+      }
       for (let i = 0; i < 3; i++) {
         const x = WIDTH * 0.18 + i * 300;
         const y = HEIGHT * 0.31;
@@ -1462,6 +1556,8 @@
       shooter: { hp: 34, speed: 64, r: 14, color: "#ff9757", value: 16, shoot: 2.1 },
       tank: { hp: 95, speed: 42, r: 22, color: "#9a7dff", value: 36 },
       splitter: { hp: 46, speed: 80, r: 15, color: "#64ffc5", value: 18, split: true },
+      sniper: { hp: 30, speed: 56, r: 13, color: "#ffda7d", value: 24, shoot: 2.7, sniper: true },
+      leech: { hp: 42, speed: 118, r: 11, color: "#8ef2ff", value: 15, leech: true },
       boss: {
         dreadnought: { hp: 880, speed: 34, r: 40, color: "#ff4d7f", value: 520, shoot: 1.6, burst: 2.9 },
         lancer: { hp: 760, speed: 56, r: 34, color: "#ff9c5d", value: 540, shoot: 0.85, burst: 2.2 },
@@ -1491,6 +1587,9 @@
       bossType: kind === "boss" ? bossType : "",
       burstCd: kind === "boss" ? d.burst : 999,
       summonCd: kind === "boss" && d.summon ? d.summon : 999,
+      spiralOffset: rng.range(0, TAU),
+      sniper: Boolean(d.sniper),
+      leech: Boolean(d.leech),
       telegraphShot: 0,
       telegraphBurst: 0,
       hitFlash: 0,
@@ -1509,6 +1608,8 @@
       addEnemy("chaser");
       if (state.wave >= 3 && rng.next() < 0.52) addEnemy("shooter");
       if (state.wave >= 4 && rng.next() < 0.4) addEnemy("splitter");
+      if (state.wave >= 4 && rng.next() < 0.32) addEnemy("sniper");
+      if (state.wave >= 3 && rng.next() < 0.35) addEnemy("leech");
       if (state.wave >= 5 && rng.next() < 0.28) addEnemy("tank");
     }
     if (state.waveClock >= state.waveLength) {
@@ -1639,8 +1740,8 @@
 
   function applyDropEffect(type) {
     if (type === "heal") player.hp = Math.min(player.maxHp, player.hp + 26);
-    if (type === "overclock") state.overclock = 9;
-    if (type === "freeze") state.freeze = 3.6;
+    if (type === "overclock") state.overclock = 9 + player.overclockBonusTime;
+    if (type === "freeze") state.freeze = 3.6 + player.freezeBonusTime;
   }
 
   function maybeDrop(x, y) {
@@ -1661,7 +1762,7 @@
     const streakBonus = 1 + Math.min(0.8, state.streak * 0.015);
     const scoreGain = enemy.value * comboBoost * streakBonus * (state.overclock > 0 ? 1.3 : 1) * modifier.scoreMul * state.runMods.scoreMul;
     state.score += scoreGain;
-    player.scrap += Math.ceil(enemy.value * 0.35);
+    player.scrap += Math.ceil(enemy.value * 0.35 * player.salvageMult);
     player.xp += enemy.value * 0.55;
     state.combo += 1;
     state.comboTimer = player.comboDuration;
@@ -1676,6 +1777,9 @@
       player.shield += 25;
       state.flash = Math.max(state.flash, 0.36);
       pushEvent(`${enemy.bossType || "Boss"} destroyed: +1 bomb, +25 shield.`);
+    }
+    if (player.streakGuard > 0 && state.streak > 0 && state.streak % 15 === 0) {
+      player.shield += 4 * player.streakGuard;
     }
     if (state.streak > 0 && state.streak % 25 === 0) pushEvent(`Streak ${state.streak}! Score bonus increased.`);
   }
@@ -1718,18 +1822,42 @@
     player.level += 1;
     player.nextXp = Math.floor(player.nextXp * 1.29 + 16);
     state.mode = "levelup";
-    const pool = upgrades.filter((u) => {
+    rerollChoices(true);
+    pushEvent(`Level ${player.level} reached.`);
+  }
+
+  function buildUpgradePool() {
+    return upgrades.filter((u) => {
+      if (state.bannedUpgrades[u.id]) return false;
       if (u.id === "weapon_scatter") return !state.unlockedWeapons.scatter;
       if (u.id === "weapon_rail") return !state.unlockedWeapons.rail;
       return true;
     });
+  }
+
+  function rerollChoices(free = false) {
+    if (state.mode !== "levelup") return;
+    if (!free) {
+      if (player.rerolls <= 0) return;
+      player.rerolls -= 1;
+    }
+    const pool = buildUpgradePool();
     state.choices = [];
     while (state.choices.length < 3 && pool.length) {
       const idx = Math.floor(rng.range(0, pool.length));
       state.choices.push(pool[idx]);
       pool.splice(idx, 1);
     }
-    pushEvent(`Level ${player.level} reached.`);
+  }
+
+  function banishChoice(i) {
+    if (state.mode !== "levelup" || player.banishes <= 0) return;
+    const choice = state.choices[i];
+    if (!choice) return;
+    player.banishes -= 1;
+    state.bannedUpgrades[choice.id] = true;
+    pushEvent(`Banished upgrade: ${choice.label}`);
+    rerollChoices(true);
   }
 
   function pickUpgrade(i) {
@@ -1760,11 +1888,13 @@
     player.bombCd = 10 * player.bombCdMult;
     state.flash = 0.42;
     state.cameraShake = 14;
+    const radius = 320 * player.bombRadiusMult;
+    const bombDamage = 180 * player.bombDamageMult;
     for (let i = state.enemies.length - 1; i >= 0; i--) {
       const e = state.enemies[i];
       const d = Math.hypot(e.x - player.x, e.y - player.y);
-      if (d < 320) {
-        e.hp -= 180;
+      if (d < radius) {
+        e.hp -= bombDamage;
         if (e.hp <= 0) enemyDie(i);
       }
     }
@@ -1815,7 +1945,7 @@
       vy: Math.sin(wingman.aimAngle) * 630 * player.projectileSpeedMult,
       r: 4 * player.projectileSizeMult,
       life: 1.05 * player.rangeMult,
-      damage: player.damage * 0.7,
+      damage: player.damage * 0.7 * player.wingmanDamageMult,
       color: "#7dffca",
       pierce: 1 + Math.floor(player.bonusPierce * 0.5),
     });
@@ -1856,6 +1986,17 @@
       player.dashTimer = 0.18;
       state.cameraShake += 5;
       spawnParticles(player.x, player.y, "#9af2ff", 12, 180);
+      if (player.dashShockwave > 0) {
+        for (let i = state.enemies.length - 1; i >= 0; i--) {
+          const e = state.enemies[i];
+          const d = Math.hypot(e.x - player.x, e.y - player.y);
+          if (d < 110) {
+            e.hp -= player.dashShockwave;
+            e.hitFlash = 0.12;
+            if (e.hp <= 0) enemyDie(i);
+          }
+        }
+      }
     }
     player.x += player.vx * dt;
     player.y += player.vy * dt;
@@ -1989,6 +2130,10 @@
       const uy = dy / d;
       e.vx += (ux * e.speed * freezeMul - e.vx) * Math.min(1, dt * 5);
       e.vy += (uy * e.speed * freezeMul - e.vy) * Math.min(1, dt * 5);
+      if (e.sniper && d < 280) {
+        e.vx += (-ux * 180 - e.vx) * Math.min(1, dt * 4);
+        e.vy += (-uy * 180 - e.vy) * Math.min(1, dt * 4);
+      }
       if (e.boss && d < 210) {
         // Boss keeps standoff distance to set up projectile patterns.
         e.vx += (-ux * 120 - e.vx) * Math.min(1, dt * 3);
@@ -2011,6 +2156,21 @@
             r: 6,
             life: 4,
             damage: 8 + state.wave * 0.6,
+          });
+        }
+      }
+      if (e.sniper && d > 180) {
+        e.shootCd -= dt * freezeMul;
+        if (e.shootCd <= 0) {
+          e.shootCd = 2.3;
+          state.enemyProjectiles.push({
+            x: e.x,
+            y: e.y,
+            vx: ux * 360 * state.runMods.projectileSpeedMul,
+            vy: uy * 360 * state.runMods.projectileSpeedMul,
+            r: 7,
+            life: 4.8,
+            damage: 12 + state.wave * 0.75,
           });
         }
       }
@@ -2121,13 +2281,30 @@
                 damage: 7 + state.wave * 0.65,
               });
             }
+            const spiralCount = 9;
+            e.spiralOffset += 0.45;
+            for (let i = 0; i < spiralCount; i++) {
+              const a = e.spiralOffset + i * 0.35;
+              state.enemyProjectiles.push({
+                x: e.x,
+                y: e.y,
+                vx: Math.cos(a) * 205 * pMul,
+                vy: Math.sin(a) * 205 * pMul,
+                r: 6,
+                life: 3.8,
+                damage: 6 + state.wave * 0.55,
+              });
+            }
             state.flash = Math.max(state.flash, 0.14);
           }
         }
       }
       if (d < e.r + player.r) {
         if (player.contactDamageCd <= 0) {
-          damagePlayer((e.boss ? 16 : 7) + state.wave * 1.1);
+          damagePlayer((e.boss ? 16 : e.leech ? 9 : 7) + state.wave * 1.1);
+          if (e.leech) {
+            e.hp = Math.min(e.maxHp, e.hp + 12 + state.wave * 0.8);
+          }
           player.contactDamageCd = e.boss ? 0.5 : 0.34;
         }
       }
@@ -2211,6 +2388,7 @@
     if (gameplayActive) {
       state.overclock = Math.max(0, state.overclock - dt);
       state.freeze = Math.max(0, state.freeze - dt);
+      if (player.shieldRegen > 0) player.shield = Math.min(160, player.shield + player.shieldRegen * dt);
       state.streakTimer = Math.max(0, state.streakTimer - dt);
       if (state.streakTimer <= 0) state.streak = 0;
       if (state.mission && !state.mission.complete && state.mission.id === "survive") {
@@ -2324,6 +2502,8 @@
       "#8df08f": "#3dc1d3",
       "#b8a4ff": "#2ecc71",
       "#ff9c5d": "#54a0ff",
+      "#ffda7d": "#f39c12",
+      "#8ef2ff": "#1abc9c",
     };
     return map[c] || c;
   }
@@ -2541,7 +2721,8 @@
     ctx.fillText("STARFALL ARENA", WIDTH * 0.19, HEIGHT * 0.2);
     ctx.fillStyle = "#d8e4ff";
     ctx.font = "26px Trebuchet MS";
-    ctx.fillText(`Menu: ${state.menuScreen === "home" ? "Home" : "Settings"} (S to switch)`, WIDTH * 0.34, HEIGHT * 0.27);
+    const menuLabel = state.menuScreen[0].toUpperCase() + state.menuScreen.slice(1);
+    ctx.fillText(`Menu: ${menuLabel} (S to switch)`, WIDTH * 0.34, HEIGHT * 0.27);
 
     ctx.fillStyle = "rgba(12, 21, 44, 0.88)";
     ctx.fillRect(WIDTH * 0.1, HEIGHT * 0.3, WIDTH * 0.8, HEIGHT * 0.44);
@@ -2583,6 +2764,12 @@
       ctx.font = "24px Trebuchet MS";
       ctx.fillText("Open Settings", btn.settings.x + btn.settings.w * 0.28, btn.settings.y + 30);
 
+      ctx.fillStyle = "rgba(145, 217, 255, 0.95)";
+      ctx.fillRect(btn.codex.x, btn.codex.y, btn.codex.w, btn.codex.h);
+      ctx.fillStyle = "#122947";
+      ctx.font = "22px Trebuchet MS";
+      ctx.fillText("Open Synergy Codex", btn.codex.x + btn.codex.w * 0.23, btn.codex.y + 27);
+
       ctx.font = "16px Trebuchet MS";
       ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
       ctx.fillRect(btn.daily.x, btn.daily.y, btn.daily.w, btn.daily.h);
@@ -2594,7 +2781,7 @@
       ctx.fillText("Set Seed", btn.seed.x + 42, btn.seed.y + 23);
       ctx.fillText("Copy Code", btn.copy.x + 32, btn.copy.y + 23);
       ctx.fillText("Co-op", btn.coop.x + 20, btn.coop.y + 23);
-    } else {
+    } else if (state.menuScreen === "settings") {
       ctx.fillText(`Touch UI: ${state.settings.showTouchUi ? "ON" : "OFF"} (press T)`, WIDTH * 0.13, HEIGHT * 0.39);
       ctx.fillText(`Screen shake: ${state.settings.screenShake.toFixed(1)} (press - / +)`, WIDTH * 0.13, HEIGHT * 0.44);
       ctx.fillText(`Quality: ${(qualityModes[state.settings.quality] || qualityModes.balanced).label} (Z)`, WIDTH * 0.13, HEIGHT * 0.49);
@@ -2657,6 +2844,33 @@
       ctx.fillText("Warp", btn.bindWarp.x + 21, btn.bindWarp.y + 21);
       ctx.fillText("Preset", btn.preset.x + 23, btn.preset.y + 21);
       ctx.fillText("Reset", btn.resetSettings.x + 28, btn.resetSettings.y + 21);
+    } else {
+      const discovered = Object.keys(state.synergies);
+      ctx.fillStyle = "#d9e8ff";
+      ctx.font = "24px Trebuchet MS";
+      ctx.fillText(`Synergies discovered ${discovered.length} / ${synergyDefs.length}`, WIDTH * 0.13, HEIGHT * 0.38);
+      ctx.font = "20px Trebuchet MS";
+      let row = 0;
+      for (const s of synergyDefs) {
+        const unlocked = Boolean(state.synergies[s.id]);
+        const needs = Object.entries(s.needs)
+          .map(([k, v]) => {
+            const up = upgrades.find((u) => u.id === k);
+            return `${up ? up.label : k} x${v}`;
+          })
+          .join(", ");
+        ctx.fillStyle = unlocked ? "#a8ffd2" : "#e3edff";
+        ctx.fillText(`${unlocked ? "UNLOCKED" : "LOCKED"} - ${s.label}`, WIDTH * 0.13, HEIGHT * 0.44 + row * 42);
+        ctx.fillStyle = "#a6bbdd";
+        ctx.fillText(`Needs: ${needs}`, WIDTH * 0.4, HEIGHT * 0.44 + row * 42);
+        row += 1;
+        if (row >= 6) break;
+      }
+      ctx.fillStyle = "rgba(143, 190, 255, 0.95)";
+      ctx.fillRect(btn.back.x, btn.back.y, btn.back.w, btn.back.h);
+      ctx.fillStyle = "#122947";
+      ctx.font = "26px Trebuchet MS";
+      ctx.fillText("Back To Home", btn.back.x + btn.back.w * 0.27, btn.back.y + 34);
     }
   }
 
@@ -2693,6 +2907,11 @@
       ctx.fillStyle = "#9ec7ff";
       ctx.font = "24px Trebuchet MS";
       ctx.fillText(`${i + 1}`, x + 15, y + 32);
+      ctx.fillStyle = player.banishes > 0 ? "#ffd9b0" : "#8c8f99";
+      ctx.fillRect(x + w - 58, y + 10, 40, 30);
+      ctx.fillStyle = "#14213b";
+      ctx.font = "16px Trebuchet MS";
+      ctx.fillText("X", x + w - 43, y + 31);
       ctx.fillStyle = "#ecf3ff";
       ctx.font = "25px Trebuchet MS";
       if (c) {
@@ -2712,6 +2931,15 @@
         if (line) ctx.fillText(line, x + 18, y + 76 + row * 34);
       }
     }
+    const rerollBtn = { x: WIDTH * 0.25, y: HEIGHT * 0.78, w: 220, h: 50 };
+    ctx.fillStyle = player.rerolls > 0 ? "rgba(137, 205, 255, 0.95)" : "rgba(90, 106, 131, 0.75)";
+    ctx.fillRect(rerollBtn.x, rerollBtn.y, rerollBtn.w, rerollBtn.h);
+    ctx.fillStyle = "#122947";
+    ctx.font = "22px Trebuchet MS";
+    ctx.fillText(`Reroll (4) x${player.rerolls}`, rerollBtn.x + 24, rerollBtn.y + 33);
+    ctx.fillStyle = "#ffd8b8";
+    ctx.font = "20px Trebuchet MS";
+    ctx.fillText(`Banish token(s): ${player.banishes} (5/6/7 or X buttons)`, WIDTH * 0.46, HEIGHT * 0.815);
   }
 
   function drawGameOver() {
@@ -2866,6 +3094,8 @@
         rangeMult: Number(player.rangeMult.toFixed(2)),
         bonusPierce: player.bonusPierce,
         level: player.level,
+        rerolls: player.rerolls,
+        banishes: player.banishes,
         xp: Number(player.xp.toFixed(1)),
         xpToNext: player.nextXp,
         weapon: state.selectedWeapon,
@@ -2915,6 +3145,7 @@
           }
         : null,
       synergies: Object.keys(state.synergies),
+      bannedUpgrades: Object.keys(state.bannedUpgrades).length,
       streak: state.streak,
       unlockedWeapons: state.unlockedWeapons,
       meta: {

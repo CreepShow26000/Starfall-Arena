@@ -178,3 +178,32 @@ Original prompt: Create a really fun really really high quality game i can play 
     - `actions-menu.json` passed
     - `actions-long.json` passed
   - No console/page error artifacts in latest runs.
+- Fun/content expansion + requested systems pass:
+  - Added 2 new enemy types:
+    - `sniper`: long-range precision shooter that kites away when too close.
+    - `leech`: fast contact enemy that self-heals on player hit.
+  - Added additional boss behavior pattern:
+    - Dreadnought now adds spiral burst barrages during burst windows.
+  - Added 10+ new upgrade options (including new economy/combat/control options), notably:
+    - crit power, overclock duration, cryo duration, shield regen, bomb payload, bomb radius, dash shockwave, wingman arsenal, streak guard, salvage ops, reroll token, banish token.
+  - Added new synergy set extensions:
+    - Event Harvester
+    - Shock Spear
+    - Guardian Loop
+  - Added Synergy Codex menu screen (`home/settings/codex`) with locked/unlocked synergy requirements.
+  - Added level-up reroll + banish mechanics:
+    - Reroll choices (`4` or button) consuming reroll tokens.
+    - Banish individual card (`5/6/7` or card X button) consuming banish tokens and removing that upgrade from future pool.
+  - Added banned-upgrade tracking state and filtering in upgrade roll pool.
+  - Integrated new stats into gameplay loop:
+    - bomb damage/radius scaling
+    - dash shockwave damage pulse
+    - wingman damage multiplier
+    - overclock/freeze duration bonuses
+    - shield regen over time
+    - streak guard shield pulses
+    - salvage gain multiplier
+- Validation:
+  - `node --check game.js` passed.
+  - Playwright checks passed (`actions-menu`, `actions-long`, codex-click path).
+  - Visual verification captured codex screen and sustained gameplay state without new error logs.
