@@ -333,6 +333,10 @@
     state.settings.screenShake = Math.max(0, Math.min(1.5, state.settings.screenShake + delta));
   }
 
+  function getQualitySettings() {
+    return qualityModes[state.settings.quality] || qualityModes.balanced;
+  }
+
   function actionPressed(action) {
     const k =
       action === "dash" ? state.settings.dashKey : action === "bomb" ? state.settings.bombKey : state.settings.warpKey;
@@ -1325,7 +1329,7 @@
     state.waveClock += dt;
     const modifier = state.waveModifier || waveModifiers[0];
     const pacing = Math.max(0.32, (1.3 - state.wave * 0.05) / (modifier.spawnMul * state.runMods.spawnMul));
-    const quality = qualityModes[state.settings.quality] || qualityModes.balanced;
+    const quality = getQualitySettings();
     const enemyCap = quality.enemyCap;
     state.danger += dt;
     if (state.danger >= pacing && state.enemies.length < enemyCap) {
@@ -1423,7 +1427,7 @@
   }
 
   function spawnParticles(x, y, color, n, force = 130) {
-    const quality = qualityModes[state.settings.quality] || qualityModes.balanced;
+    const quality = getQualitySettings();
     const vfxMul = state.settings.lowVfx ? 0.25 : quality.particleMul;
     const count = Math.max(1, Math.round(n * vfxMul));
     for (let i = 0; i < count; i++) {
@@ -2092,13 +2096,22 @@
 
   function drawBackground() {
     const g = ctx.createLinearGradient(0, 0, 0, HEIGHT);
-    g.addColorStop(0, "#101a36");
-    g.addColorStop(0.6, "#0a1026");
-    g.addColorStop(1, "#060814");
+    if (state.settings.colorblind) {
+      g.addColorStop(0, "#12223c");
+      g.addColorStop(0.6, "#0d1f2f");
+      g.addColorStop(1, "#08131f");
+    } else {
+      g.addColorStop(0, "#101a36");
+      g.addColorStop(0.6, "#0a1026");
+      g.addColorStop(1, "#060814");
+    }
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
-    for (const s of state.stars) {
-      ctx.fillStyle = `rgba(176, 214, 255, ${0.32 + s.r * 0.18})`;
+    const starStep = state.settings.lowVfx ? 4 : state.settings.quality === "performance" ? 3 : state.settings.quality === "balanced" ? 2 : 1;
+    for (let i = 0; i < state.stars.length; i += starStep) {
+      const s = state.stars[i];
+      const alphaMul = state.settings.lowVfx ? 0.4 : 1;
+      ctx.fillStyle = `rgba(176, 214, 255, ${(0.32 + s.r * 0.18) * alphaMul})`;
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.r, 0, TAU);
       ctx.fill();
@@ -2160,7 +2173,8 @@
   }
 
   function drawGameplay() {
-    const shake = state.cameraShake * state.settings.screenShake;
+    const shakeMul = state.settings.lowVfx ? 0.25 : 1;
+    const shake = state.cameraShake * state.settings.screenShake * shakeMul;
     const sx = rng.range(-shake, shake);
     const sy = rng.range(-shake, shake);
     ctx.save();
@@ -2208,13 +2222,15 @@
     }
     drawPlayer();
     drawWingman();
-    for (const p of state.particles) {
-      ctx.fillStyle = adaptColor(p.color);
-      ctx.globalAlpha = Math.max(0, p.life * 2);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, TAU);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+    if (!state.settings.lowVfx) {
+      for (const p of state.particles) {
+        ctx.fillStyle = adaptColor(p.color);
+        ctx.globalAlpha = Math.max(0, p.life * 2);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, TAU);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     }
     for (const n of state.damageNumbers) {
       ctx.globalAlpha = Math.max(0, n.life / 0.6);
@@ -2408,13 +2424,18 @@
       ctx.fillText("Back To Home", btn.back.x + btn.back.w * 0.27, btn.back.y + 34);
 
       ctx.font = "14px Trebuchet MS";
-      ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
+      ctx.fillStyle = state.settings.showTouchUi ? "rgba(141, 222, 178, 0.95)" : "rgba(124, 171, 255, 0.95)";
       ctx.fillRect(btn.touchToggle.x, btn.touchToggle.y, btn.touchToggle.w, btn.touchToggle.h);
+      ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
       ctx.fillRect(btn.shakeDown.x, btn.shakeDown.y, btn.shakeDown.w, btn.shakeDown.h);
       ctx.fillRect(btn.shakeUp.x, btn.shakeUp.y, btn.shakeUp.w, btn.shakeUp.h);
+      ctx.fillStyle = "rgba(249, 232, 157, 0.95)";
       ctx.fillRect(btn.quality.x, btn.quality.y, btn.quality.w, btn.quality.h);
+      ctx.fillStyle = state.settings.lowVfx ? "rgba(141, 222, 178, 0.95)" : "rgba(124, 171, 255, 0.95)";
       ctx.fillRect(btn.lowVfx.x, btn.lowVfx.y, btn.lowVfx.w, btn.lowVfx.h);
+      ctx.fillStyle = state.settings.colorblind ? "rgba(141, 222, 178, 0.95)" : "rgba(124, 171, 255, 0.95)";
       ctx.fillRect(btn.colorblind.x, btn.colorblind.y, btn.colorblind.w, btn.colorblind.h);
+      ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
       ctx.fillRect(btn.aimDown.x, btn.aimDown.y, btn.aimDown.w, btn.aimDown.h);
       ctx.fillRect(btn.aimUp.x, btn.aimUp.y, btn.aimUp.w, btn.aimUp.h);
       ctx.fillRect(btn.bindDash.x, btn.bindDash.y, btn.bindDash.w, btn.bindDash.h);
@@ -2583,8 +2604,9 @@
     if (state.mode !== "menu") drawHud();
     drawOnlineOverlay();
     drawTouchControls();
+    const flashMul = state.settings.lowVfx ? 0.25 : 1;
     if (state.flash > 0) {
-      ctx.fillStyle = `rgba(255, 247, 214, ${state.flash})`;
+      ctx.fillStyle = `rgba(255, 247, 214, ${state.flash * flashMul})`;
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
     }
   }
@@ -2605,6 +2627,14 @@
         status: state.net.status,
         playerSlot: state.net.playerSlot,
         snapshotSeq: state.net.snapshotSeq,
+      },
+      settings: {
+        touchUi: state.settings.showTouchUi,
+        colorblind: state.settings.colorblind,
+        lowVfx: state.settings.lowVfx,
+        quality: state.settings.quality,
+        aimAssist: Number(state.settings.aimAssist.toFixed(2)),
+        screenShake: Number(state.settings.screenShake.toFixed(2)),
       },
       player: {
         x: Number(player.x.toFixed(1)),

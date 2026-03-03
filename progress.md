@@ -139,3 +139,18 @@ Original prompt: Create a really fun really really high quality game i can play 
     - Settings: touch toggle, shake +/- , quality cycle, low-vfx/colorblind toggles, aim +/- , dash/bomb/warp bind cycle.
   - Added visual button blocks for all these controls in settings/home.
   - Sanity check: `node --check game.js` passes.
+- UX/mobile/settings reliability pass:
+  - Improved responsive layout and centering in `style.css`:
+    - Switched to flex centering with safe-area padding.
+    - Canvas now uses `100dvh` aware sizing, max bounds, and `touch-action: none`.
+    - Mobile-specific border/shadow scaling.
+  - Added mobile web-app meta tags in `index.html`.
+  - Settings made visibly effective and easier to verify:
+    - Added explicit visual state styling for toggle buttons (green when ON).
+    - Quality mode remains highlighted and updates label instantly.
+    - Low VFX now clearly reduces shake/flash/stars/particles.
+    - Colorblind mode now shifts background palette + adapted draw colors.
+  - Added `settings` block to `render_game_to_text` for deterministic verification.
+- Validation notes:
+  - Verified settings clicks now toggle values in-menu (Low VFX/Colorblind/Quality).
+  - `node --check game.js` passes.
