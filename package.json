@@ -1,0 +1,21 @@
+{
+  "name": "fun-game",
+  "version": "1.0.0",
+  "description": "",
+  "main": "game.js",
+  "scripts": {
+    "dev": "python3 -m http.server 5173",
+    "start": "python3 -m http.server 5173",
+    "multiplayer": "node multiplayer-server.js",
+    "dev:online": "echo \"Run npm run multiplayer in one terminal, npm run dev in another\"",
+    "test": "echo \"Run Playwright client manually via web_game_playwright_client.js\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.58.2",
+    "ws": "^8.18.3"
+  }
+}

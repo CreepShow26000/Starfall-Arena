@@ -1,0 +1,80 @@
+Original prompt: Create a really fun really really high quality game i can play and wont get bored from easily at all make it as good as possible
+
+- Initialized a full game scaffold from an empty repo.
+- Implemented `Starfall Arena` in canvas with:
+  - Movement, aim, shooting, dash, bomb, pause, fullscreen, restart.
+  - Multiple weapons (Pulse, Scatter, Rail), enemy archetypes, waves, score/combo system.
+  - XP leveling with upgrade choice cards, drops/powerups, drones, crits, shields.
+  - Polished VFX: particles, starfield, flash, camera shake, HUD, menu/overlays.
+- Added required testing hooks:
+  - `window.render_game_to_text`
+  - `window.advanceTime(ms)`
+- Polished pause behavior so temporary combat buffs/debuffs do not tick down while paused.
+- Next: run local server + Playwright client loop, inspect screenshots/states/errors, then patch gameplay balance/bugs.
+- Installed local tooling for automated checks:
+  - `npm init -y`
+  - `npm install playwright`
+  - `npx playwright install chromium`
+- Ran Playwright validation against `http://localhost:5173`:
+  - `output/web-game` (3 iterations, reference action payload): no console/page errors.
+  - `output/web-game-long` (4 iterations, sustained custom action payload): no console/page errors.
+- Fixed a testing/gameplay issue discovered during validation:
+  - Added deterministic-mode render loop behavior so realtime updates do not drift from stepped automation state.
+  - Added contact-damage cooldown to prevent unfair instant HP melt from enemy overlap.
+  - Added `contactDamageCooldown` to `render_game_to_text` player state.
+- Upgrade pass completed:
+  - Added wave modifiers (`Standard`, `Blitz`, `Fortified`, `Frenzy`) that alter speed/health/spawn/score dynamics.
+  - Added wave mission system (`Eliminate`, `Hold position`, `Collect power cores`) with rewards (score/XP/heal/bombs).
+  - Added Dreadnought boss archetype (spawn every 3rd wave) with aimed + radial projectile patterns and boss rewards.
+  - Added warp challenge mechanic (`Enter`) to skip to next wave at a cost/cooldown to speed run pacing.
+  - Updated HUD and `render_game_to_text` payload to expose modifier/mission/warp cooldown state.
+  - Rebalanced pacing: shorter wave lengths, enemy spawn caps, delayed shooter/tank introduction, safer early progression.
+- Validation after upgrade:
+  - `output/web-game`: no error logs; mission/modifier state appears correctly in JSON and screenshots.
+  - `output/web-game-long`: no error logs; sustained play state remains coherent.
+  - `output/web-game-boss`: no error logs; warp + wave progression logic validated through repeated runs.
+- Major quality-of-life + progression pass:
+  - Enabled full auto-fire during gameplay; player now focuses on aiming, movement, and abilities.
+  - Added smart aim fallback for no-pointer scenarios (targets nearest enemy), while preserving mouse-aim priority.
+  - Expanded upgrade pool with many new stats: lifesteal, armor, projectile speed/size/range, extra pierce, boss damage, drop rate, mission reward multiplier, combo-duration tuning, cooldown tuning.
+  - Added persistent meta-progression using `localStorage` (`starfall_meta_v1`): shard currency, best score/wave tracking, and permanent menu upgrades.
+  - Added menu shop hotkeys:
+    - `7` Hull (permanent max HP)
+    - `8` Cannons (permanent base damage)
+    - `9` Thrusters (permanent move speed)
+  - Added run-end shard rewards and persistence save/load handling.
+  - Updated HUD/menu/control copy and `render_game_to_text` to include new state fields (meta, unlocks, advanced player stats).
+- Validation after auto-fire/meta pass:
+  - `output/web-game`, `output/web-game-long`, and `output/web-game-boss` rerun successfully.
+  - No console/page error files produced.
+- Co-op expansion pass:
+  - Added a true second controllable ship (local co-op wingman) with its own controls:
+    - `IJKL` move
+    - `O` dash
+    - `U` bomb
+    - auto-aim + auto-fire support stream
+  - Added menu co-op toggle (`J`) and in-game co-op HUD status.
+  - Integrated wingman into combat loop, rendering, projectile emissions, enemy targeting preference logic, and text-state output.
+  - Extended `render_game_to_text` with `coopJoined` and `wingman` state payload.
+- Validation after co-op pass:
+  - Re-ran `output/web-game`, `output/web-game-long`, `output/web-game-boss`.
+  - No error files; screenshots show both ships and co-op HUD/controls.
+- Web distribution setup:
+  - Added `README.md` with local run + controls + publishing instructions.
+  - Added static-host deploy configs:
+    - `.github/workflows/deploy-pages.yml` (GitHub Pages on push to `main`)
+    - `netlify.toml`
+    - `vercel.json`
+  - Updated `package.json` scripts with `dev`/`start` local server commands.
+- Online multiplayer upgrade (internet-ready architecture):
+  - Added WebSocket relay backend: `multiplayer-server.js` (`create_room`, `join_room`, `guest_input`, `state_snapshot`).
+  - Added client networking in `game.js`:
+    - Menu controls: `H` host, `G` join room code, `X` disconnect.
+    - Host-authoritative flow: host simulates and streams snapshots; guest sends input.
+    - Added online status overlay + room/session indicators.
+    - Added `online` fields in `render_game_to_text`.
+  - Added npm scripts/deps:
+    - `npm run multiplayer`
+    - dependency `ws`.
+  - Local protocol smoke test passed (`relay-ok 1 playing 1`) using two websocket clients.
+  - Regression pass with Playwright succeeded; no error files.

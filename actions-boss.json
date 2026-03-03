@@ -1,0 +1,12 @@
+{
+  "steps": [
+    { "buttons": ["space"], "frames": 4 },
+    { "buttons": ["right"], "frames": 80 },
+    { "buttons": ["left_mouse_button"], "frames": 80, "mouse_x": 960, "mouse_y": 360 },
+    { "buttons": ["left"], "frames": 80 },
+    { "buttons": ["left_mouse_button"], "frames": 80, "mouse_x": 220, "mouse_y": 260 },
+    { "buttons": ["up"], "frames": 50 },
+    { "buttons": ["down"], "frames": 50 },
+    { "buttons": ["enter"], "frames": 3 }
+  ]
+}
