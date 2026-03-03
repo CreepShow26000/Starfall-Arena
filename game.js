@@ -109,6 +109,7 @@
     keysDown: new Set(),
     keyPressed: new Set(),
     mouseDown: false,
+    lastMenuTapTs: 0,
     net: {
       mode: "offline",
       socket: null,
@@ -296,6 +297,40 @@
     const idx = list.indexOf(cur);
     state.settings[key] = list[(idx + 1) % list.length];
     pushEvent(`${which} key set to ${displayKey(state.settings[key])}.`);
+  }
+
+  function toggleRunMode() {
+    state.runMode = state.runMode === "daily" ? "standard" : "daily";
+    pushEvent(`Run mode set to ${state.runMode.toUpperCase()}.`);
+  }
+
+  function setCustomSeedFromPrompt() {
+    const seed = prompt("Enter a custom seed code (letters/numbers):", state.runSeed || "");
+    if (seed && seed.trim()) {
+      state.runMode = "seeded";
+      state.runSeed = seed.trim();
+      pushEvent(`Seeded run ready: ${state.runSeed}`);
+    }
+  }
+
+  function copyRunCode() {
+    const share = state.runMode === "daily" ? state.challenge?.code : state.runSeed || "STANDARD";
+    navigator.clipboard?.writeText(String(share || "STANDARD")).catch(() => {});
+    pushEvent(`Copied run code: ${share || "STANDARD"}`);
+  }
+
+  function cycleQualityMode() {
+    const opts = ["high", "balanced", "performance"];
+    const idx = opts.indexOf(state.settings.quality);
+    state.settings.quality = opts[(idx + 1) % opts.length];
+  }
+
+  function adjustAimAssist(delta) {
+    state.settings.aimAssist = Math.max(0, Math.min(0.45, state.settings.aimAssist + delta));
+  }
+
+  function adjustScreenShake(delta) {
+    state.settings.screenShake = Math.max(0, Math.min(1.5, state.settings.screenShake + delta));
   }
 
   function actionPressed(action) {
@@ -1002,11 +1037,74 @@
     const start = { x: WIDTH * 0.34, y: HEIGHT * 0.72, w: WIDTH * 0.32, h: 58 };
     const settings = { x: WIDTH * 0.34, y: HEIGHT * 0.8, w: WIDTH * 0.32, h: 46 };
     const back = { x: WIDTH * 0.34, y: HEIGHT * 0.78, w: WIDTH * 0.32, h: 52 };
-    return { start, settings, back };
+    const daily = { x: WIDTH * 0.12, y: HEIGHT * 0.665, w: WIDTH * 0.2, h: 36 };
+    const seed = { x: WIDTH * 0.34, y: HEIGHT * 0.665, w: WIDTH * 0.2, h: 36 };
+    const copy = { x: WIDTH * 0.56, y: HEIGHT * 0.665, w: WIDTH * 0.2, h: 36 };
+    const coop = { x: WIDTH * 0.78, y: HEIGHT * 0.665, w: WIDTH * 0.1, h: 36 };
+    const touchToggle = { x: WIDTH * 0.63, y: HEIGHT * 0.365, w: WIDTH * 0.24, h: 34 };
+    const shakeDown = { x: WIDTH * 0.63, y: HEIGHT * 0.415, w: WIDTH * 0.11, h: 34 };
+    const shakeUp = { x: WIDTH * 0.76, y: HEIGHT * 0.415, w: WIDTH * 0.11, h: 34 };
+    const quality = { x: WIDTH * 0.63, y: HEIGHT * 0.465, w: WIDTH * 0.24, h: 34 };
+    const lowVfx = { x: WIDTH * 0.63, y: HEIGHT * 0.515, w: WIDTH * 0.11, h: 34 };
+    const colorblind = { x: WIDTH * 0.76, y: HEIGHT * 0.515, w: WIDTH * 0.11, h: 34 };
+    const aimDown = { x: WIDTH * 0.63, y: HEIGHT * 0.555, w: WIDTH * 0.11, h: 34 };
+    const aimUp = { x: WIDTH * 0.76, y: HEIGHT * 0.555, w: WIDTH * 0.11, h: 34 };
+    const bindDash = { x: WIDTH * 0.63, y: HEIGHT * 0.605, w: WIDTH * 0.075, h: 34 };
+    const bindBomb = { x: WIDTH * 0.715, y: HEIGHT * 0.605, w: WIDTH * 0.075, h: 34 };
+    const bindWarp = { x: WIDTH * 0.8, y: HEIGHT * 0.605, w: WIDTH * 0.075, h: 34 };
+    return {
+      start,
+      settings,
+      back,
+      daily,
+      seed,
+      copy,
+      coop,
+      touchToggle,
+      shakeDown,
+      shakeUp,
+      quality,
+      lowVfx,
+      colorblind,
+      aimDown,
+      aimUp,
+      bindDash,
+      bindBomb,
+      bindWarp,
+    };
   }
 
   function pointInRect(pt, r) {
     return pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h;
+  }
+
+  function handleMenuTap(pt) {
+    if (state.mode !== "menu") return false;
+    const btn = menuButtonRects();
+    if (state.menuScreen === "home") {
+      if (pointInRect(pt, btn.start)) resetGame();
+      else if (pointInRect(pt, btn.settings)) state.menuScreen = "settings";
+      else if (pointInRect(pt, btn.daily)) toggleRunMode();
+      else if (pointInRect(pt, btn.seed)) setCustomSeedFromPrompt();
+      else if (pointInRect(pt, btn.copy)) copyRunCode();
+      else if (pointInRect(pt, btn.coop)) state.coopJoined = !state.coopJoined;
+      else return false;
+    } else {
+      if (pointInRect(pt, btn.back)) state.menuScreen = "home";
+      else if (pointInRect(pt, btn.touchToggle)) state.settings.showTouchUi = !state.settings.showTouchUi;
+      else if (pointInRect(pt, btn.shakeDown)) adjustScreenShake(-0.1);
+      else if (pointInRect(pt, btn.shakeUp)) adjustScreenShake(0.1);
+      else if (pointInRect(pt, btn.quality)) cycleQualityMode();
+      else if (pointInRect(pt, btn.lowVfx)) state.settings.lowVfx = !state.settings.lowVfx;
+      else if (pointInRect(pt, btn.colorblind)) state.settings.colorblind = !state.settings.colorblind;
+      else if (pointInRect(pt, btn.aimDown)) adjustAimAssist(-0.04);
+      else if (pointInRect(pt, btn.aimUp)) adjustAimAssist(0.04);
+      else if (pointInRect(pt, btn.bindDash)) cycleBinding("dash");
+      else if (pointInRect(pt, btn.bindBomb)) cycleBinding("bomb");
+      else if (pointInRect(pt, btn.bindWarp)) cycleBinding("warp");
+      else return false;
+    }
+    return true;
   }
 
   canvas.addEventListener("mousemove", (evt) => {
@@ -1020,6 +1118,11 @@
   });
   canvas.addEventListener("mousedown", (evt) => {
     if (evt.button === 0) state.mouseDown = true;
+    const pt = toCanvasCoords(evt);
+    if (handleMenuTap(pt)) {
+      state.lastMenuTapTs = performance.now();
+      return;
+    }
   });
   window.addEventListener("mouseup", (evt) => {
     if (evt.button === 0) state.mouseDown = false;
@@ -1032,6 +1135,10 @@
       state.touch.enabled = true;
       for (const t of evt.changedTouches) {
         const pt = toCanvasCoords(t);
+        if (handleMenuTap(pt)) {
+          state.lastMenuTapTs = performance.now();
+          continue;
+        }
         state.touch.points[t.identifier] = pt;
         if (state.touch.leftId === null && pt.x < WIDTH * 0.6) {
           state.touch.leftId = t.identifier;
@@ -1091,48 +1198,22 @@
     else if (k === "p" && state.mode === "paused") state.mode = "playing";
     if (state.mode === "menu" && k === "s") state.menuScreen = state.menuScreen === "home" ? "settings" : "home";
     if (state.mode === "menu" && (k === "enter" || k === " ")) resetGame();
-    if (state.mode === "menu" && k === "y") {
-      state.runMode = state.runMode === "daily" ? "standard" : "daily";
-      pushEvent(`Run mode set to ${state.runMode.toUpperCase()}.`);
-    }
-    if (state.mode === "menu" && k === "v") {
-      const seed = prompt("Enter a custom seed code (letters/numbers):", state.runSeed || "");
-      if (seed && seed.trim()) {
-        state.runMode = "seeded";
-        state.runSeed = seed.trim();
-        pushEvent(`Seeded run ready: ${state.runSeed}`);
-      }
-    }
-    if (state.mode === "menu" && k === "b") {
-      const share = state.runMode === "daily" ? state.challenge?.code : state.runSeed || "STANDARD";
-      navigator.clipboard?.writeText(String(share || "STANDARD")).catch(() => {});
-      pushEvent(`Copied run code: ${share || "STANDARD"}`);
-    }
+    if (state.mode === "menu" && k === "y") toggleRunMode();
+    if (state.mode === "menu" && k === "v") setCustomSeedFromPrompt();
+    if (state.mode === "menu" && k === "b") copyRunCode();
     if (state.mode === "menu" && ["7", "8", "9"].includes(k)) purchaseMetaUpgrade(k);
     if (state.mode === "menu" && k === "j") state.coopJoined = !state.coopJoined;
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "t") state.settings.showTouchUi = !state.settings.showTouchUi;
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "c") state.settings.colorblind = !state.settings.colorblind;
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "l") state.settings.lowVfx = !state.settings.lowVfx;
-    if (state.mode === "menu" && state.menuScreen === "settings" && k === "z") {
-      const opts = ["high", "balanced", "performance"];
-      const idx = opts.indexOf(state.settings.quality);
-      state.settings.quality = opts[(idx + 1) % opts.length];
-    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "z") cycleQualityMode();
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "u") cycleBinding("dash");
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "i") cycleBinding("bomb");
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "o") cycleBinding("warp");
-    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "[" || k === "{")) {
-      state.settings.aimAssist = Math.max(0, state.settings.aimAssist - 0.04);
-    }
-    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "]" || k === "}")) {
-      state.settings.aimAssist = Math.min(0.45, state.settings.aimAssist + 0.04);
-    }
-    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "-" || k === "_")) {
-      state.settings.screenShake = Math.max(0, state.settings.screenShake - 0.1);
-    }
-    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "=" || k === "+")) {
-      state.settings.screenShake = Math.min(1.5, state.settings.screenShake + 0.1);
-    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "[" || k === "{")) adjustAimAssist(-0.04);
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "]" || k === "}")) adjustAimAssist(0.04);
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "-" || k === "_")) adjustScreenShake(-0.1);
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "=" || k === "+")) adjustScreenShake(0.1);
     if (state.mode === "menu" && k === "h") hostOnlineRoom();
     if (state.mode === "menu" && k === "g") joinOnlineRoom();
     if (k === "x" && state.net.mode !== "offline") resetNetSession();
@@ -1148,17 +1229,8 @@
     state.keysDown.delete(evt.key.toLowerCase());
   });
   canvas.addEventListener("click", (evt) => {
-    if (state.mode === "menu") {
-      const pt = toCanvasCoords(evt);
-      const btn = menuButtonRects();
-      if (state.menuScreen === "home") {
-        if (pointInRect(pt, btn.start)) resetGame();
-        else if (pointInRect(pt, btn.settings)) state.menuScreen = "settings";
-      } else {
-        if (pointInRect(pt, btn.back)) state.menuScreen = "home";
-      }
-      return;
-    }
+    if (state.mode === "menu" && performance.now() - state.lastMenuTapTs < 250) return;
+    if (handleMenuTap(toCanvasCoords(evt))) return;
     if (state.mode === "gameover") {
       resetGame();
       return;
@@ -2297,6 +2369,18 @@
       ctx.fillStyle = "#122947";
       ctx.font = "24px Trebuchet MS";
       ctx.fillText("Open Settings", btn.settings.x + btn.settings.w * 0.28, btn.settings.y + 30);
+
+      ctx.font = "16px Trebuchet MS";
+      ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
+      ctx.fillRect(btn.daily.x, btn.daily.y, btn.daily.w, btn.daily.h);
+      ctx.fillRect(btn.seed.x, btn.seed.y, btn.seed.w, btn.seed.h);
+      ctx.fillRect(btn.copy.x, btn.copy.y, btn.copy.w, btn.copy.h);
+      ctx.fillRect(btn.coop.x, btn.coop.y, btn.coop.w, btn.coop.h);
+      ctx.fillStyle = "#122947";
+      ctx.fillText("Toggle Daily", btn.daily.x + 16, btn.daily.y + 23);
+      ctx.fillText("Set Seed", btn.seed.x + 42, btn.seed.y + 23);
+      ctx.fillText("Copy Code", btn.copy.x + 32, btn.copy.y + 23);
+      ctx.fillText("Co-op", btn.coop.x + 20, btn.coop.y + 23);
     } else {
       ctx.fillText(`Touch UI: ${state.settings.showTouchUi ? "ON" : "OFF"} (press T)`, WIDTH * 0.13, HEIGHT * 0.39);
       ctx.fillText(`Screen shake: ${state.settings.screenShake.toFixed(1)} (press - / +)`, WIDTH * 0.13, HEIGHT * 0.44);
@@ -2322,6 +2406,32 @@
       ctx.fillStyle = "#122947";
       ctx.font = "26px Trebuchet MS";
       ctx.fillText("Back To Home", btn.back.x + btn.back.w * 0.27, btn.back.y + 34);
+
+      ctx.font = "14px Trebuchet MS";
+      ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
+      ctx.fillRect(btn.touchToggle.x, btn.touchToggle.y, btn.touchToggle.w, btn.touchToggle.h);
+      ctx.fillRect(btn.shakeDown.x, btn.shakeDown.y, btn.shakeDown.w, btn.shakeDown.h);
+      ctx.fillRect(btn.shakeUp.x, btn.shakeUp.y, btn.shakeUp.w, btn.shakeUp.h);
+      ctx.fillRect(btn.quality.x, btn.quality.y, btn.quality.w, btn.quality.h);
+      ctx.fillRect(btn.lowVfx.x, btn.lowVfx.y, btn.lowVfx.w, btn.lowVfx.h);
+      ctx.fillRect(btn.colorblind.x, btn.colorblind.y, btn.colorblind.w, btn.colorblind.h);
+      ctx.fillRect(btn.aimDown.x, btn.aimDown.y, btn.aimDown.w, btn.aimDown.h);
+      ctx.fillRect(btn.aimUp.x, btn.aimUp.y, btn.aimUp.w, btn.aimUp.h);
+      ctx.fillRect(btn.bindDash.x, btn.bindDash.y, btn.bindDash.w, btn.bindDash.h);
+      ctx.fillRect(btn.bindBomb.x, btn.bindBomb.y, btn.bindBomb.w, btn.bindBomb.h);
+      ctx.fillRect(btn.bindWarp.x, btn.bindWarp.y, btn.bindWarp.w, btn.bindWarp.h);
+      ctx.fillStyle = "#122947";
+      ctx.fillText("Touch", btn.touchToggle.x + 30, btn.touchToggle.y + 21);
+      ctx.fillText("Shake-", btn.shakeDown.x + 25, btn.shakeDown.y + 21);
+      ctx.fillText("Shake+", btn.shakeUp.x + 25, btn.shakeUp.y + 21);
+      ctx.fillText("Quality", btn.quality.x + 35, btn.quality.y + 21);
+      ctx.fillText("VFX", btn.lowVfx.x + 35, btn.lowVfx.y + 21);
+      ctx.fillText("Color", btn.colorblind.x + 33, btn.colorblind.y + 21);
+      ctx.fillText("Aim-", btn.aimDown.x + 34, btn.aimDown.y + 21);
+      ctx.fillText("Aim+", btn.aimUp.x + 34, btn.aimUp.y + 21);
+      ctx.fillText("Dash", btn.bindDash.x + 22, btn.bindDash.y + 21);
+      ctx.fillText("Bomb", btn.bindBomb.x + 20, btn.bindBomb.y + 21);
+      ctx.fillText("Warp", btn.bindWarp.x + 21, btn.bindWarp.y + 21);
     }
   }
 

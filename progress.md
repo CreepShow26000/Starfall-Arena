@@ -131,3 +131,11 @@ Original prompt: Create a really fun really really high quality game i can play 
   - Add leaderboard backend if you later want cross-device score comparison.
   - Add ship unlock cosmetics tied to daily streak completion.
   - Expand synergy UI with an in-menu codex page listing discovered combos.
+- Follow-up reliability fix for "buttons/features not working":
+  - Added dedicated menu interaction handler (`handleMenuTap`) and wired it to `mousedown`, `touchstart`, and `click` paths.
+  - Added debounce (`lastMenuTapTs`) to prevent double-triggering from mousedown+click.
+  - Added explicit clickable menu controls for previously keyboard-only features:
+    - Home: toggle daily, set seed, copy code, toggle co-op.
+    - Settings: touch toggle, shake +/- , quality cycle, low-vfx/colorblind toggles, aim +/- , dash/bomb/warp bind cycle.
+  - Added visual button blocks for all these controls in settings/home.
+  - Sanity check: `node --check game.js` passes.
