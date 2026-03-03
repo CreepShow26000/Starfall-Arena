@@ -20,6 +20,7 @@
 
   const state = {
     mode: "menu",
+    menuScreen: "home",
     time: 0,
     wave: 1,
     waveClock: 0,
@@ -50,6 +51,20 @@
     waveSkipCd: 0,
     pointer: { x: WIDTH * 0.5, y: HEIGHT * 0.5, inside: false },
     coopJoined: true,
+    settings: {
+      screenShake: 1,
+      showTouchUi: true,
+    },
+    touch: {
+      enabled: (navigator.maxTouchPoints || 0) > 0,
+      leftId: null,
+      points: {},
+      stickBase: { x: 120, y: HEIGHT - 120 },
+      moveX: 0,
+      moveY: 0,
+      actions: { dash: false, bomb: false, warp: false },
+      prevActions: { dash: false, bomb: false, warp: false },
+    },
     keysDown: new Set(),
     keyPressed: new Set(),
     mouseDown: false,
@@ -648,6 +663,70 @@
     return { x, y };
   }
 
+  function getTouchButtonLayout() {
+    return {
+      dash: { x: WIDTH - 210, y: HEIGHT - 120, r: 44 },
+      bomb: { x: WIDTH - 120, y: HEIGHT - 185, r: 44 },
+      warp: { x: WIDTH - 90, y: HEIGHT - 95, r: 40 },
+    };
+  }
+
+  function applyTouchDerivedInputs() {
+    const touch = state.touch;
+    if (!touch.enabled) return;
+    const buttons = getTouchButtonLayout();
+    const active = { dash: false, bomb: false, warp: false };
+    let aimPoint = null;
+    for (const [id, pt] of Object.entries(touch.points)) {
+      if (String(touch.leftId) === id) continue;
+      aimPoint = pt;
+      const dd = Math.hypot(pt.x - buttons.dash.x, pt.y - buttons.dash.y);
+      const db = Math.hypot(pt.x - buttons.bomb.x, pt.y - buttons.bomb.y);
+      const dw = Math.hypot(pt.x - buttons.warp.x, pt.y - buttons.warp.y);
+      if (dd <= buttons.dash.r) active.dash = true;
+      if (db <= buttons.bomb.r) active.bomb = true;
+      if (dw <= buttons.warp.r) active.warp = true;
+    }
+    if (aimPoint) {
+      state.pointer.x = aimPoint.x;
+      state.pointer.y = aimPoint.y;
+      state.pointer.inside = true;
+    }
+    touch.actions = active;
+    if (active.dash && !touch.prevActions.dash) state.keyPressed.add("shift");
+    if (active.bomb && !touch.prevActions.bomb) state.keyPressed.add("e");
+    if (active.warp && !touch.prevActions.warp) state.keyPressed.add("enter");
+    touch.prevActions = active;
+  }
+
+  function updateTouchMoveFromPoint(pt) {
+    const t = state.touch;
+    const maxR = 58;
+    const dx = pt.x - t.stickBase.x;
+    const dy = pt.y - t.stickBase.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const use = Math.min(maxR, d);
+    t.moveX = (dx / d) * (use / maxR);
+    t.moveY = (dy / d) * (use / maxR);
+  }
+
+  function clearTouchMove() {
+    state.touch.leftId = null;
+    state.touch.moveX = 0;
+    state.touch.moveY = 0;
+  }
+
+  function menuButtonRects() {
+    const start = { x: WIDTH * 0.34, y: HEIGHT * 0.72, w: WIDTH * 0.32, h: 58 };
+    const settings = { x: WIDTH * 0.34, y: HEIGHT * 0.8, w: WIDTH * 0.32, h: 46 };
+    const back = { x: WIDTH * 0.34, y: HEIGHT * 0.78, w: WIDTH * 0.32, h: 52 };
+    return { start, settings, back };
+  }
+
+  function pointInRect(pt, r) {
+    return pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h;
+  }
+
   canvas.addEventListener("mousemove", (evt) => {
     const pt = toCanvasCoords(evt);
     state.pointer.x = pt.x;
@@ -664,6 +743,60 @@
     if (evt.button === 0) state.mouseDown = false;
   });
 
+  canvas.addEventListener(
+    "touchstart",
+    (evt) => {
+      evt.preventDefault();
+      state.touch.enabled = true;
+      for (const t of evt.changedTouches) {
+        const pt = toCanvasCoords(t);
+        state.touch.points[t.identifier] = pt;
+        if (state.touch.leftId === null && pt.x < WIDTH * 0.6) {
+          state.touch.leftId = t.identifier;
+          state.touch.stickBase = { x: pt.x, y: pt.y };
+          updateTouchMoveFromPoint(pt);
+        }
+      }
+    },
+    { passive: false }
+  );
+
+  canvas.addEventListener(
+    "touchmove",
+    (evt) => {
+      evt.preventDefault();
+      for (const t of evt.changedTouches) {
+        const pt = toCanvasCoords(t);
+        state.touch.points[t.identifier] = pt;
+        if (state.touch.leftId === t.identifier) updateTouchMoveFromPoint(pt);
+      }
+    },
+    { passive: false }
+  );
+
+  canvas.addEventListener(
+    "touchend",
+    (evt) => {
+      evt.preventDefault();
+      for (const t of evt.changedTouches) {
+        delete state.touch.points[t.identifier];
+        if (state.touch.leftId === t.identifier) clearTouchMove();
+      }
+    },
+    { passive: false }
+  );
+  canvas.addEventListener(
+    "touchcancel",
+    (evt) => {
+      evt.preventDefault();
+      for (const t of evt.changedTouches) {
+        delete state.touch.points[t.identifier];
+        if (state.touch.leftId === t.identifier) clearTouchMove();
+      }
+    },
+    { passive: false }
+  );
+
   window.addEventListener("keydown", (evt) => {
     const k = evt.key.toLowerCase();
     state.keysDown.add(k);
@@ -674,9 +807,17 @@
     }
     if (k === "p" && state.mode === "playing") state.mode = "paused";
     else if (k === "p" && state.mode === "paused") state.mode = "playing";
+    if (state.mode === "menu" && k === "s") state.menuScreen = state.menuScreen === "home" ? "settings" : "home";
     if (state.mode === "menu" && (k === "enter" || k === " ")) resetGame();
     if (state.mode === "menu" && ["7", "8", "9"].includes(k)) purchaseMetaUpgrade(k);
     if (state.mode === "menu" && k === "j") state.coopJoined = !state.coopJoined;
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "t") state.settings.showTouchUi = !state.settings.showTouchUi;
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "-" || k === "_")) {
+      state.settings.screenShake = Math.max(0, state.settings.screenShake - 0.1);
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "=" || k === "+")) {
+      state.settings.screenShake = Math.min(1.5, state.settings.screenShake + 0.1);
+    }
     if (state.mode === "menu" && k === "h") hostOnlineRoom();
     if (state.mode === "menu" && k === "g") joinOnlineRoom();
     if (k === "x" && state.net.mode !== "offline") resetNetSession();
@@ -692,7 +833,18 @@
     state.keysDown.delete(evt.key.toLowerCase());
   });
   canvas.addEventListener("click", (evt) => {
-    if (state.mode === "menu" || state.mode === "gameover") {
+    if (state.mode === "menu") {
+      const pt = toCanvasCoords(evt);
+      const btn = menuButtonRects();
+      if (state.menuScreen === "home") {
+        if (pointInRect(pt, btn.start)) resetGame();
+        else if (pointInRect(pt, btn.settings)) state.menuScreen = "settings";
+      } else {
+        if (pointInRect(pt, btn.back)) state.menuScreen = "home";
+      }
+      return;
+    }
+    if (state.mode === "gameover") {
       resetGame();
       return;
     }
@@ -1082,8 +1234,10 @@
     const right = state.keysDown.has("d") || state.keysDown.has("arrowright");
     const up = state.keysDown.has("w") || state.keysDown.has("arrowup");
     const down = state.keysDown.has("s") || state.keysDown.has("arrowdown");
-    const dx = (right ? 1 : 0) - (left ? 1 : 0);
-    const dy = (down ? 1 : 0) - (up ? 1 : 0);
+    const kx = (right ? 1 : 0) - (left ? 1 : 0);
+    const ky = (down ? 1 : 0) - (up ? 1 : 0);
+    const dx = Math.max(-1, Math.min(1, kx + state.touch.moveX));
+    const dy = Math.max(-1, Math.min(1, ky + state.touch.moveY));
     const speed = player.speed * (state.overclock > 0 ? 1.12 : 1);
     const len = Math.hypot(dx, dy) || 1;
     const ax = (dx / len) * speed;
@@ -1381,6 +1535,7 @@
   }
 
   function update(dt) {
+    applyTouchDerivedInputs();
     if (state.net.mode === "guest") {
       state.net.sendTimer += dt;
       if (state.net.sendTimer >= 0.05) {
@@ -1477,8 +1632,9 @@
   }
 
   function drawGameplay() {
-    const sx = rng.range(-state.cameraShake, state.cameraShake);
-    const sy = rng.range(-state.cameraShake, state.cameraShake);
+    const shake = state.cameraShake * state.settings.screenShake;
+    const sx = rng.range(-shake, shake);
+    const sy = rng.range(-shake, shake);
     ctx.save();
     ctx.translate(sx, sy);
     for (const d of state.drops) {
@@ -1607,28 +1763,53 @@
   function drawMenu() {
     ctx.fillStyle = "rgba(2, 6, 15, 0.72)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    const btn = menuButtonRects();
     ctx.fillStyle = "#edf3ff";
-    ctx.font = "72px Trebuchet MS";
-    ctx.fillText("STARFALL ARENA", WIDTH * 0.17, HEIGHT * 0.26);
+    ctx.font = "64px Trebuchet MS";
+    ctx.fillText("STARFALL ARENA", WIDTH * 0.19, HEIGHT * 0.2);
     ctx.fillStyle = "#d8e4ff";
-    ctx.font = "30px Trebuchet MS";
-    ctx.fillText("Fast, escalating survival shooter", WIDTH * 0.31, HEIGHT * 0.35);
-    ctx.font = "24px Trebuchet MS";
-    ctx.fillText("WASD/Arrows move  |  Mouse aim  |  Auto-fire always on", WIDTH * 0.2, HEIGHT * 0.47);
-    ctx.fillText("Shift dash  |  E nova bomb  |  1/2/3 weapon swap", WIDTH * 0.28, HEIGHT * 0.53);
-    ctx.fillText(`Co-op ${state.coopJoined ? "ON" : "OFF"} (J toggle)  |  P2 controls: IJKL move, O dash, U bomb`, WIDTH * 0.12, HEIGHT * 0.59);
-    ctx.fillText("Online: H host room  |  G join room  |  X disconnect", WIDTH * 0.26, HEIGHT * 0.615);
-    ctx.fillText("Missions each wave  |  Dreadnought boss every 3 waves", WIDTH * 0.2, HEIGHT * 0.64);
-    ctx.fillText("Enter warp challenge  |  P pause  |  F fullscreen", WIDTH * 0.24, HEIGHT * 0.69);
-    ctx.font = "20px Trebuchet MS";
-    ctx.fillText(
-      `Shards ${state.meta?.shards || 0} | 7 Hull (${getMetaUpgradeCost(state.meta?.perks.hull || 0)}) | 8 Cannons (${getMetaUpgradeCost(state.meta?.perks.cannons || 0)}) | 9 Thrusters (${getMetaUpgradeCost(state.meta?.perks.thrusters || 0)})`,
-      WIDTH * 0.08,
-      HEIGHT * 0.74
-    );
-    ctx.fillStyle = "#fff2a5";
-    ctx.font = "34px Trebuchet MS";
-    ctx.fillText("Click or press Enter to start", WIDTH * 0.29, HEIGHT * 0.79);
+    ctx.font = "26px Trebuchet MS";
+    ctx.fillText(`Menu: ${state.menuScreen === "home" ? "Home" : "Settings"} (S to switch)`, WIDTH * 0.34, HEIGHT * 0.27);
+
+    ctx.fillStyle = "rgba(12, 21, 44, 0.88)";
+    ctx.fillRect(WIDTH * 0.1, HEIGHT * 0.32, WIDTH * 0.8, HEIGHT * 0.34);
+    ctx.strokeStyle = "#89b8ff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(WIDTH * 0.1, HEIGHT * 0.32, WIDTH * 0.8, HEIGHT * 0.34);
+
+    ctx.fillStyle = "#e7f0ff";
+    ctx.font = "22px Trebuchet MS";
+    if (state.menuScreen === "home") {
+      ctx.fillText("WASD move | Mouse aim | Auto-fire always on | Shift dash | E bomb | Enter warp", WIDTH * 0.13, HEIGHT * 0.39);
+      ctx.fillText(`Co-op ${state.coopJoined ? "ON" : "OFF"} (J) | P2: IJKL move, O dash, U bomb`, WIDTH * 0.13, HEIGHT * 0.44);
+      ctx.fillText("Online: H host room | G join room | X disconnect", WIDTH * 0.13, HEIGHT * 0.49);
+      ctx.fillText("Mobile: on-screen joystick/buttons available", WIDTH * 0.13, HEIGHT * 0.54);
+      ctx.fillText(`Shards ${state.meta?.shards || 0} | Best ${state.meta?.bestScore || 0} pts wave ${state.meta?.bestWave || 0}`, WIDTH * 0.13, HEIGHT * 0.59);
+
+      ctx.fillStyle = "rgba(255, 238, 168, 0.95)";
+      ctx.fillRect(btn.start.x, btn.start.y, btn.start.w, btn.start.h);
+      ctx.fillStyle = "#14213b";
+      ctx.font = "30px Trebuchet MS";
+      ctx.fillText("Start Run", btn.start.x + btn.start.w * 0.33, btn.start.y + 38);
+
+      ctx.fillStyle = "rgba(143, 190, 255, 0.95)";
+      ctx.fillRect(btn.settings.x, btn.settings.y, btn.settings.w, btn.settings.h);
+      ctx.fillStyle = "#122947";
+      ctx.font = "24px Trebuchet MS";
+      ctx.fillText("Open Settings", btn.settings.x + btn.settings.w * 0.28, btn.settings.y + 30);
+    } else {
+      ctx.fillText(`Touch UI: ${state.settings.showTouchUi ? "ON" : "OFF"} (press T)`, WIDTH * 0.13, HEIGHT * 0.39);
+      ctx.fillText(`Screen shake: ${state.settings.screenShake.toFixed(1)} (press - / +)`, WIDTH * 0.13, HEIGHT * 0.44);
+      ctx.fillText(`Permanent upgrades: 7 Hull (${getMetaUpgradeCost(state.meta?.perks.hull || 0)})`, WIDTH * 0.13, HEIGHT * 0.49);
+      ctx.fillText(`8 Cannons (${getMetaUpgradeCost(state.meta?.perks.cannons || 0)}) | 9 Thrusters (${getMetaUpgradeCost(state.meta?.perks.thrusters || 0)})`, WIDTH * 0.13, HEIGHT * 0.54);
+      ctx.fillText("Tip: Keep touch UI ON for phones/tablets.", WIDTH * 0.13, HEIGHT * 0.59);
+
+      ctx.fillStyle = "rgba(143, 190, 255, 0.95)";
+      ctx.fillRect(btn.back.x, btn.back.y, btn.back.w, btn.back.h);
+      ctx.fillStyle = "#122947";
+      ctx.font = "26px Trebuchet MS";
+      ctx.fillText("Back To Home", btn.back.x + btn.back.w * 0.27, btn.back.y + 34);
+    }
   }
 
   function drawPause() {
@@ -1707,24 +1888,59 @@
 
   function drawOnlineOverlay() {
     if (state.net.mode === "offline" && state.mode !== "menu") return;
+    const touchOffset = state.settings.showTouchUi && state.touch.enabled && state.mode === "playing" ? 108 : 0;
+    const boxY = HEIGHT - 88 - touchOffset;
     ctx.fillStyle = "rgba(6, 10, 20, 0.7)";
-    ctx.fillRect(WIDTH - 350, HEIGHT - 88, 334, 72);
+    ctx.fillRect(WIDTH - 350, boxY, 334, 72);
     ctx.fillStyle = "#d5e3ff";
     ctx.font = "16px Trebuchet MS";
     if (state.net.mode === "offline") {
-      ctx.fillText("Online: Menu H=host, G=join, X=disconnect", WIDTH - 338, HEIGHT - 58);
+      ctx.fillText("Online: Menu H=host, G=join, X=disconnect", WIDTH - 338, boxY + 30);
       return;
     }
-    ctx.fillText(`Online ${state.net.mode.toUpperCase()} | Room ${state.net.roomCode || "..."}`, WIDTH - 338, HEIGHT - 60);
+    ctx.fillText(`Online ${state.net.mode.toUpperCase()} | Room ${state.net.roomCode || "..."}`, WIDTH - 338, boxY + 28);
     if (state.net.mode === "host") {
       const peer = state.net.status === "peer_joined" ? "Connected" : "Waiting";
       ctx.fillStyle = peer === "Connected" ? "#94ffd0" : "#ffe7a6";
-      ctx.fillText(`Guest: ${peer}  |  Press X to disconnect`, WIDTH - 338, HEIGHT - 35);
+      ctx.fillText(`Guest: ${peer}  |  Press X to disconnect`, WIDTH - 338, boxY + 53);
     } else {
       const age = state.net.lastSnapshotAt ? ((performance.now() - state.net.lastSnapshotAt) / 1000).toFixed(1) : "n/a";
       ctx.fillStyle = "#9bdcff";
-      ctx.fillText(`Snapshots seq ${state.net.snapshotSeq} | age ${age}s | X disconnect`, WIDTH - 338, HEIGHT - 35);
+      ctx.fillText(`Snapshots seq ${state.net.snapshotSeq} | age ${age}s | X disconnect`, WIDTH - 338, boxY + 53);
     }
+  }
+
+  function drawTouchControls() {
+    if (!(state.mode === "playing" && state.settings.showTouchUi && state.touch.enabled)) return;
+    const t = state.touch;
+    const buttons = getTouchButtonLayout();
+    const stickR = 58;
+    ctx.save();
+    ctx.globalAlpha = 0.86;
+    ctx.fillStyle = "rgba(14,24,44,0.72)";
+    ctx.beginPath();
+    ctx.arc(t.stickBase.x, t.stickBase.y, stickR, 0, TAU);
+    ctx.fill();
+    const knobX = t.stickBase.x + t.moveX * stickR;
+    const knobY = t.stickBase.y + t.moveY * stickR;
+    ctx.fillStyle = "rgba(156,223,255,0.92)";
+    ctx.beginPath();
+    ctx.arc(knobX, knobY, 23, 0, TAU);
+    ctx.fill();
+
+    for (const [name, b] of Object.entries(buttons)) {
+      const active = state.touch.actions[name];
+      ctx.fillStyle = active ? "rgba(255,223,153,0.95)" : "rgba(18,33,63,0.8)";
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = active ? "#122" : "#d8ebff";
+      ctx.font = "18px Trebuchet MS";
+      const label = name === "dash" ? "Dash" : name === "bomb" ? "Bomb" : "Warp";
+      const tw = ctx.measureText(label).width;
+      ctx.fillText(label, b.x - tw / 2, b.y + 6);
+    }
+    ctx.restore();
   }
 
   function render() {
@@ -1736,6 +1952,7 @@
     if (state.mode === "gameover") drawGameOver();
     if (state.mode !== "menu") drawHud();
     drawOnlineOverlay();
+    drawTouchControls();
     if (state.flash > 0) {
       ctx.fillStyle = `rgba(255, 247, 214, ${state.flash})`;
       ctx.fillRect(0, 0, WIDTH, HEIGHT);

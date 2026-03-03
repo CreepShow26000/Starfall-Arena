@@ -78,3 +78,18 @@ Original prompt: Create a really fun really really high quality game i can play 
     - dependency `ws`.
   - Local protocol smoke test passed (`relay-ok 1 playing 1`) using two websocket clients.
   - Regression pass with Playwright succeeded; no error files.
+- Mobile + menu quality pass:
+  - Reworked menu into two pages (`Home` and `Settings`) to prevent overlapping text blocks.
+  - Added clear menu buttons with click hitboxes (`Start Run`, `Open Settings`, `Back To Home`).
+  - Added settings options:
+    - Toggle touch UI (`T`)
+    - Adjust screen shake (`-` / `+`)
+  - Added full touch controls:
+    - Virtual movement joystick (left side)
+    - On-screen Dash/Bomb/Warp buttons (right side)
+    - Touch aim support and touch action edge triggers.
+  - Added touch-safe online overlay positioning to avoid UI collisions with mobile controls.
+  - Validated by Playwright:
+    - gameplay run (`output/web-game`)
+    - menu render check (`output/web-game-menu/shot-0.png`)
+    - no error files produced.
