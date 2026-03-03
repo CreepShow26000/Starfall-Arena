@@ -7,6 +7,7 @@
   const MAX_EVENTS = 6;
   const DAILY_PREFIX = "SF-DAILY";
   const SETTINGS_STORAGE_KEY = "starfall_settings_v1";
+  const RUN_SAVE_KEY = "starfall_run_save_v1";
   const EVENT_MIN_GAP = 11;
   const EVENT_MAX_GAP = 18;
   const qualityModes = {
@@ -52,6 +53,7 @@
     menuScreen: "home",
     runMode: "standard",
     runSeed: "",
+    runSaveAvailable: false,
     time: 0,
     wave: 1,
     waveClock: 0,
@@ -117,6 +119,7 @@
       adaptiveEnemyCapMul: 1,
       adaptiveVfxMul: 1,
     },
+    saveTimer: 0,
     touch: {
       enabled: (navigator.maxTouchPoints || 0) > 0,
       leftId: null,
@@ -300,6 +303,144 @@
     } catch {}
   }
 
+  function hasRunSave() {
+    try {
+      return Boolean(localStorage.getItem(RUN_SAVE_KEY));
+    } catch {
+      return false;
+    }
+  }
+
+  function clearRunSave() {
+    try {
+      localStorage.removeItem(RUN_SAVE_KEY);
+    } catch {}
+    state.runSaveAvailable = false;
+  }
+
+  function createRunSavePayload() {
+    return {
+      savedAt: Date.now(),
+      mode: "playing",
+      runMode: state.runMode,
+      runSeed: state.runSeed,
+      time: state.time,
+      wave: state.wave,
+      waveClock: state.waveClock,
+      waveLength: state.waveLength,
+      combo: state.combo,
+      comboTimer: state.comboTimer,
+      score: state.score,
+      kills: state.kills,
+      enemies: state.enemies,
+      projectiles: state.projectiles,
+      enemyProjectiles: state.enemyProjectiles,
+      drops: state.drops,
+      particles: state.particles,
+      events: state.events,
+      selectedWeapon: state.selectedWeapon,
+      unlockedWeapons: state.unlockedWeapons,
+      waveModifier: state.waveModifier,
+      activeEvent: state.activeEvent,
+      eventClock: state.eventClock,
+      runMods: state.runMods,
+      challengeRules: state.challengeRules,
+      mission: state.mission,
+      challenge: state.challenge,
+      synergies: state.synergies,
+      upgradeCounts: state.upgradeCounts,
+      bannedUpgrades: state.bannedUpgrades,
+      streak: state.streak,
+      streakTimer: state.streakTimer,
+      overclock: state.overclock,
+      freeze: state.freeze,
+      danger: state.danger,
+      waveSkipCd: state.waveSkipCd,
+      coopJoined: state.coopJoined,
+      player: { ...player },
+      wingman: { ...wingman },
+    };
+  }
+
+  function saveRun() {
+    if (state.mode !== "playing" && state.mode !== "paused" && state.mode !== "levelup") return;
+    if (!player.alive || state.net.mode !== "offline") return;
+    try {
+      localStorage.setItem(RUN_SAVE_KEY, JSON.stringify(createRunSavePayload()));
+      state.runSaveAvailable = true;
+    } catch {}
+  }
+
+  function loadSavedRun() {
+    try {
+      const raw = localStorage.getItem(RUN_SAVE_KEY);
+      if (!raw) return false;
+      const s = JSON.parse(raw);
+      if (!s || typeof s !== "object") return false;
+      state.mode = "playing";
+      state.runMode = s.runMode || "standard";
+      state.runSeed = s.runSeed || "";
+      if (state.runMode === "daily" && s.challenge?.code) {
+        state.challenge = s.challenge;
+        setRunSeed(s.challenge.code);
+      } else if (state.runMode === "seeded" && state.runSeed) {
+        setRunSeed(state.runSeed);
+      } else {
+        clearRunSeed();
+        state.runMode = "standard";
+      }
+      state.time = Number(s.time || 0);
+      state.wave = Number(s.wave || 1);
+      state.waveClock = Number(s.waveClock || 0);
+      state.waveLength = Number(s.waveLength || 26);
+      state.combo = Number(s.combo || 0);
+      state.comboTimer = Number(s.comboTimer || 0);
+      state.score = Number(s.score || 0);
+      state.kills = Number(s.kills || 0);
+      state.enemies = Array.isArray(s.enemies) ? s.enemies : [];
+      state.projectiles = Array.isArray(s.projectiles) ? s.projectiles : [];
+      state.enemyProjectiles = Array.isArray(s.enemyProjectiles) ? s.enemyProjectiles : [];
+      state.drops = Array.isArray(s.drops) ? s.drops : [];
+      state.particles = Array.isArray(s.particles) ? s.particles : [];
+      state.events = Array.isArray(s.events) ? s.events : [];
+      state.selectedWeapon = s.selectedWeapon || "pulse";
+      state.unlockedWeapons = s.unlockedWeapons || { pulse: true, scatter: false, rail: false };
+      state.waveModifier = s.waveModifier || waveModifiers[0];
+      state.activeEvent = s.activeEvent || null;
+      state.eventClock = Number(s.eventClock || EVENT_MIN_GAP);
+      state.runMods = s.runMods || {
+        enemySpeedMul: 1,
+        enemyHpMul: 1,
+        spawnMul: 1,
+        playerDamageMul: 1,
+        dropRateMul: 1,
+        scoreMul: 1,
+        projectileSpeedMul: 1,
+      };
+      state.challengeRules = s.challengeRules || { noBombRefill: false };
+      state.mission = s.mission || null;
+      state.challenge = s.challenge || buildTodayChallenge();
+      state.synergies = s.synergies || {};
+      state.upgradeCounts = s.upgradeCounts || {};
+      state.bannedUpgrades = s.bannedUpgrades || {};
+      state.streak = Number(s.streak || 0);
+      state.streakTimer = Number(s.streakTimer || 0);
+      state.overclock = Number(s.overclock || 0);
+      state.freeze = Number(s.freeze || 0);
+      state.danger = Number(s.danger || 0);
+      state.waveSkipCd = Number(s.waveSkipCd || 0);
+      state.coopJoined = Boolean(s.coopJoined);
+      Object.assign(player, s.player || {});
+      Object.assign(wingman, s.wingman || {});
+      player.alive = true;
+      state.saveTimer = 0;
+      state.runSaveAvailable = true;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function hashString(input) {
     let h = 2166136261;
     for (let i = 0; i < input.length; i++) {
@@ -367,6 +508,15 @@
   function toggleRunMode() {
     state.runMode = state.runMode === "daily" ? "standard" : "daily";
     pushEvent(`Run mode set to ${state.runMode.toUpperCase()}.`);
+  }
+
+  function continueSavedRun() {
+    if (state.mode !== "menu") return;
+    if (!loadSavedRun()) {
+      pushEvent("No saved run found.");
+      return;
+    }
+    pushEvent(`Resumed run on wave ${state.wave}.`);
   }
 
   function setCustomSeedFromPrompt() {
@@ -867,6 +1017,7 @@
   const bossCycle = ["dreadnought", "lancer", "hive", "bulwark"];
   state.meta = loadMeta();
   state.settings = loadSettings();
+  state.runSaveAvailable = hasRunSave();
   state.challenge = buildTodayChallenge();
 
   function resetRunMods() {
@@ -1052,6 +1203,7 @@
   }
 
   function resetGame() {
+    clearRunSave();
     state.mode = "playing";
     state.time = 0;
     state.wave = 1;
@@ -1088,6 +1240,7 @@
     state.freeze = 0;
     state.danger = 0;
     state.waveSkipCd = 0;
+    state.saveTimer = 0;
     player.x = WIDTH * 0.5;
     player.y = HEIGHT * 0.5;
     player.vx = 0;
@@ -1168,6 +1321,7 @@
       pushEvent(`Daily challenge: ${state.challenge.labels.join(", ")}`);
     }
     startWavePackage();
+    saveRun();
   }
 
   function toCanvasCoords(evt) {
@@ -1238,6 +1392,7 @@
   }
 
   function menuButtonRects() {
+    const cont = { x: WIDTH * 0.72, y: HEIGHT * 0.33, w: WIDTH * 0.16, h: 36 };
     const start = { x: WIDTH * 0.34, y: HEIGHT * 0.72, w: WIDTH * 0.32, h: 58 };
     const settings = { x: WIDTH * 0.34, y: HEIGHT * 0.8, w: WIDTH * 0.32, h: 46 };
     const codex = { x: WIDTH * 0.34, y: HEIGHT * 0.86, w: WIDTH * 0.32, h: 40 };
@@ -1261,6 +1416,7 @@
     const resetSettings = { x: WIDTH * 0.76, y: HEIGHT * 0.655, w: WIDTH * 0.11, h: 34 };
     return {
       start,
+      cont,
       settings,
       codex,
       back,
@@ -1293,6 +1449,7 @@
     const btn = menuButtonRects();
     if (state.menuScreen === "home") {
       if (pointInRect(pt, btn.start)) resetGame();
+      else if (pointInRect(pt, btn.cont)) continueSavedRun();
       else if (pointInRect(pt, btn.settings)) state.menuScreen = "settings";
       else if (pointInRect(pt, btn.codex)) state.menuScreen = "codex";
       else if (pointInRect(pt, btn.daily)) toggleRunMode();
@@ -1381,6 +1538,10 @@
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", refreshUiMetrics);
   }
+  window.addEventListener("beforeunload", saveRun);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) saveRun();
+  });
   refreshUiMetrics();
 
   canvas.addEventListener(
@@ -1436,6 +1597,7 @@
     if (state.mode === "menu" && (k === "enter" || k === " ")) resetGame();
     if (state.mode === "menu" && k === "y") toggleRunMode();
     if (state.mode === "menu" && k === "k") state.menuScreen = "codex";
+    if (state.mode === "menu" && state.menuScreen === "home" && k === "c") continueSavedRun();
     if (state.mode === "menu" && k === "v") setCustomSeedFromPrompt();
     if (state.mode === "menu" && k === "b") copyRunCode();
     if (state.mode === "menu" && ["7", "8", "9"].includes(k)) purchaseMetaUpgrade(k);
@@ -1566,21 +1728,26 @@
       },
     };
     const d = kind === "boss" ? defs.boss[bossType] || defs.boss.dreadnought : defs[kind];
+    const eliteChance = kind === "boss" ? 0 : Math.min(0.42, Math.max(0, (state.wave - 4) * 0.045));
+    const elite = rng.next() < eliteChance;
     const baseHp = d.hp + state.wave * (kind === "tank" ? 5 : kind === "boss" ? 34 : 2);
     const hpMul = kind === "boss" ? run.enemyHpMul * 1.05 : modifier.hpMul * run.enemyHpMul;
     const speedMul = kind === "boss" ? run.enemySpeedMul : modifier.speedMul * run.enemySpeedMul;
+    const eliteHp = elite ? 1.85 : 1;
+    const eliteSpeed = elite ? 1.18 : 1;
+    const eliteValue = elite ? 1.8 : 1;
     state.enemies.push({
       kind,
       x: spawn.x,
       y: spawn.y,
       vx: 0,
       vy: 0,
-      hp: baseHp * hpMul,
-      maxHp: baseHp * hpMul,
-      speed: (d.speed + state.wave * 1.7) * speedMul,
+      hp: baseHp * hpMul * eliteHp,
+      maxHp: baseHp * hpMul * eliteHp,
+      speed: (d.speed + state.wave * 1.7) * speedMul * eliteSpeed,
       r: d.r,
-      color: d.color,
-      value: d.value,
+      color: elite ? "#ffd95f" : d.color,
+      value: d.value * eliteValue,
       shootCd: d.shoot ? rng.range(0.2, d.shoot) : 999,
       split: Boolean(d.split),
       boss: kind === "boss",
@@ -1590,6 +1757,7 @@
       spiralOffset: rng.range(0, TAU),
       sniper: Boolean(d.sniper),
       leech: Boolean(d.leech),
+      elite,
       telegraphShot: 0,
       telegraphBurst: 0,
       hitFlash: 0,
@@ -1599,9 +1767,10 @@
   function spawnWave(dt) {
     state.waveClock += dt;
     const modifier = state.waveModifier || waveModifiers[0];
-    const pacing = Math.max(0.32, (1.3 - state.wave * 0.05) / (modifier.spawnMul * state.runMods.spawnMul));
+    const lateRamp = state.wave >= 8 ? 1 + (state.wave - 7) * 0.055 : 1;
+    const pacing = Math.max(0.2, (1.3 - state.wave * 0.06) / (modifier.spawnMul * state.runMods.spawnMul * lateRamp));
     const quality = getQualitySettings();
-    const enemyCap = Math.max(8, Math.floor(quality.enemyCap * state.perf.adaptiveEnemyCapMul));
+    const enemyCap = Math.max(8, Math.floor(quality.enemyCap * state.perf.adaptiveEnemyCapMul * (state.wave >= 10 ? 1.22 : 1)));
     state.danger += dt;
     if (state.danger >= pacing && state.enemies.length < enemyCap) {
       state.danger = 0;
@@ -1733,6 +1902,7 @@
       player.alive = false;
       player.hp = 0;
       state.mode = "gameover";
+      clearRunSave();
       grantMetaRewards();
       pushEvent(`Final score ${Math.floor(state.score)} on wave ${state.wave}.`);
     }
@@ -1843,6 +2013,18 @@
     }
     const pool = buildUpgradePool();
     state.choices = [];
+    const forced = [];
+    if (!state.unlockedWeapons.scatter && player.level >= 3 && !state.bannedUpgrades.weapon_scatter) forced.push("weapon_scatter");
+    if (!state.unlockedWeapons.rail && player.level >= 6 && !state.bannedUpgrades.weapon_rail) forced.push("weapon_rail");
+    if (player.droneCount === 0 && player.level >= 4 && !state.bannedUpgrades.drone) forced.push("drone");
+    for (const id of forced) {
+      if (state.choices.length >= 3) break;
+      const idx = pool.findIndex((u) => u.id === id);
+      if (idx >= 0) {
+        state.choices.push(pool[idx]);
+        pool.splice(idx, 1);
+      }
+    }
     while (state.choices.length < 3 && pool.length) {
       const idx = Math.floor(rng.range(0, pool.length));
       state.choices.push(pool[idx]);
@@ -2006,7 +2188,6 @@
     player.dashCd = Math.max(0, player.dashCd - dt);
     player.dashTimer = Math.max(0, player.dashTimer - dt);
     player.bombCd = Math.max(0, player.bombCd - dt);
-    player.waveSkipCd = Math.max(0, player.waveSkipCd - dt);
     player.contactDamageCd = Math.max(0, player.contactDamageCd - dt);
     if (player.regen > 0) player.hp = Math.min(player.maxHp, player.hp + player.regen * dt);
     shoot();
@@ -2155,7 +2336,7 @@
             vy: uy * 240 * state.runMods.projectileSpeedMul,
             r: 6,
             life: 4,
-            damage: 8 + state.wave * 0.6,
+            damage: (8 + state.wave * 0.75) * (e.elite ? 1.28 : 1),
           });
         }
       }
@@ -2170,7 +2351,7 @@
             vy: uy * 360 * state.runMods.projectileSpeedMul,
             r: 7,
             life: 4.8,
-            damage: 12 + state.wave * 0.75,
+            damage: (12 + state.wave * 0.95) * (e.elite ? 1.28 : 1),
           });
         }
       }
@@ -2192,7 +2373,7 @@
                 vy: Math.sin(a) * 360 * pMul,
                 r: 6,
                 life: 3.6,
-                damage: 9 + state.wave * 0.75,
+                damage: 9 + state.wave * 0.9,
               });
             }
           }
@@ -2215,7 +2396,7 @@
                 vy: Math.sin(a) * 210 * pMul,
                 r: 7,
                 life: 4.5,
-                damage: 7 + state.wave * 0.7,
+                damage: 7 + state.wave * 0.82,
               });
             }
           }
@@ -2234,7 +2415,7 @@
               vy: uy * 250 * pMul,
               r: 10,
               life: 4.8,
-              damage: 13 + state.wave * 0.95,
+              damage: 13 + state.wave * 1.1,
             });
           }
           if (e.burstCd <= 0) {
@@ -2249,7 +2430,7 @@
                 vy: Math.sin(a) * 190 * pMul,
                 r: 7,
                 life: 4.2,
-                damage: 7 + state.wave * 0.6,
+                damage: 7 + state.wave * 0.74,
               });
             }
           }
@@ -2263,7 +2444,7 @@
               vy: uy * 280 * pMul,
               r: 8,
               life: 5,
-              damage: 11 + state.wave * 0.8,
+              damage: 11 + state.wave * 0.98,
             });
           }
           if (e.burstCd <= 0) {
@@ -2278,7 +2459,7 @@
                 vy: Math.sin(a) * 230 * pMul,
                 r: 7,
                 life: 4.2,
-                damage: 7 + state.wave * 0.65,
+                damage: 7 + state.wave * 0.78,
               });
             }
             const spiralCount = 9;
@@ -2292,7 +2473,7 @@
                 vy: Math.sin(a) * 205 * pMul,
                 r: 6,
                 life: 3.8,
-                damage: 6 + state.wave * 0.55,
+                damage: 6 + state.wave * 0.66,
               });
             }
             state.flash = Math.max(state.flash, 0.14);
@@ -2301,7 +2482,8 @@
       }
       if (d < e.r + player.r) {
         if (player.contactDamageCd <= 0) {
-          damagePlayer((e.boss ? 16 : e.leech ? 9 : 7) + state.wave * 1.1);
+          const contact = ((e.boss ? 16 : e.leech ? 9 : 7) + state.wave * 1.18) * (e.elite ? 1.22 : 1);
+          damagePlayer(contact);
           if (e.leech) {
             e.hp = Math.min(e.maxHp, e.hp + 12 + state.wave * 0.8);
           }
@@ -2388,6 +2570,7 @@
     if (gameplayActive) {
       state.overclock = Math.max(0, state.overclock - dt);
       state.freeze = Math.max(0, state.freeze - dt);
+      state.waveSkipCd = Math.max(0, state.waveSkipCd - dt);
       if (player.shieldRegen > 0) player.shield = Math.min(160, player.shield + player.shieldRegen * dt);
       state.streakTimer = Math.max(0, state.streakTimer - dt);
       if (state.streakTimer <= 0) state.streak = 0;
@@ -2433,6 +2616,13 @@
     }
     updateTimers(dt, gameplayActive);
     updateRunEvents(dt);
+    if (gameplayActive) {
+      state.saveTimer += dt;
+      if (state.saveTimer >= 8) {
+        state.saveTimer = 0;
+        saveRun();
+      }
+    }
     if (state.net.mode === "host") {
       state.net.sendTimer += dt;
       if (state.net.sendTimer >= 0.05) {
@@ -2561,6 +2751,13 @@
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.r, 0, TAU);
       ctx.fill();
+      if (e.elite && !e.boss) {
+        ctx.strokeStyle = "rgba(255, 233, 146, 0.95)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r + 5, 0, TAU);
+        ctx.stroke();
+      }
       if (e.boss && (e.telegraphShot > 0 || e.telegraphBurst > 0)) {
         if (e.telegraphBurst > 0) {
           ctx.strokeStyle = `rgba(255, 194, 120, ${0.35 + e.telegraphBurst})`;
@@ -2743,6 +2940,7 @@
       ctx.fillText(`Co-op ${state.coopJoined ? "ON" : "OFF"} (J) | P2: IJKL move, O dash, U bomb`, WIDTH * 0.13, HEIGHT * 0.44);
       ctx.fillText("Online: H host room | G join room | X disconnect", WIDTH * 0.13, HEIGHT * 0.49);
       ctx.fillText(`Run mode: ${state.runMode.toUpperCase()} (Y toggle daily, V seed, B copy code)`, WIDTH * 0.13, HEIGHT * 0.54);
+      ctx.fillText(`Continue hotkey: C`, WIDTH * 0.72, HEIGHT * 0.385);
       if (state.challenge?.code) {
         ctx.fillText(`Daily ${state.challenge.code} | ${state.challenge.labels.join(" / ")}`, WIDTH * 0.13, HEIGHT * 0.59);
       }
@@ -2763,6 +2961,12 @@
       ctx.fillStyle = "#122947";
       ctx.font = "24px Trebuchet MS";
       ctx.fillText("Open Settings", btn.settings.x + btn.settings.w * 0.28, btn.settings.y + 30);
+
+      ctx.fillStyle = state.runSaveAvailable ? "rgba(160, 241, 183, 0.95)" : "rgba(95, 118, 137, 0.85)";
+      ctx.fillRect(btn.cont.x, btn.cont.y, btn.cont.w, btn.cont.h);
+      ctx.fillStyle = "#122947";
+      ctx.font = "16px Trebuchet MS";
+      ctx.fillText(state.runSaveAvailable ? "Continue (C)" : "No Save", btn.cont.x + btn.cont.w * 0.2, btn.cont.y + 24);
 
       ctx.fillStyle = "rgba(145, 217, 255, 0.95)";
       ctx.fillRect(btn.codex.x, btn.codex.y, btn.codex.w, btn.codex.h);
@@ -3075,6 +3279,7 @@
         avgFps: Number(state.perf.avgFps.toFixed(1)),
         adaptiveEnemyCapMul: Number(state.perf.adaptiveEnemyCapMul.toFixed(2)),
       },
+      runSaveAvailable: state.runSaveAvailable,
       player: {
         x: Number(player.x.toFixed(1)),
         y: Number(player.y.toFixed(1)),

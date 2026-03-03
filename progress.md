@@ -207,3 +207,27 @@ Original prompt: Create a really fun really really high quality game i can play 
   - `node --check game.js` passed.
   - Playwright checks passed (`actions-menu`, `actions-long`, codex-click path).
   - Visual verification captured codex screen and sustained gameplay state without new error logs.
+- Major follow-up pass based on gameplay feedback (warp bug, difficulty, progression, save system):
+  - Fixed warp cooldown bug:
+    - `state.waveSkipCd` now ticks down correctly in timers.
+    - Removed incorrect cooldown decrement path that caused "warp once then broken" behavior.
+  - Increased challenge pacing to avoid easy wave 20 clears:
+    - Stronger late-wave spawn pacing ramp.
+    - Higher effective enemy cap in later waves.
+    - Added elite non-boss enemies with significant HP/speed/value boosts and visual ring indicator.
+    - Increased enemy projectile/contact damage scaling across archetypes.
+  - Added progression guarantees so core upgrades are not starved:
+    - Level-up offering logic now force-includes key options at milestones when missing:
+      - Scatter unlock (level 3+)
+      - Drone (level 4+ if none)
+      - Rail unlock (level 6+)
+  - Added full run save/continue system:
+    - Save key: `starfall_run_save_v1`.
+    - Auto-save every ~8s while playing (offline runs), plus on tab hide/unload.
+    - Save cleared on death.
+    - Home menu now has `Continue` button + `C` hotkey.
+    - `render_game_to_text` now exposes `runSaveAvailable`.
+- Validation:
+  - `node --check game.js` passed.
+  - Playwright menu/gameplay regressions rerun and passed.
+  - State output confirms run-save availability and stable gameplay payloads.
