@@ -31,6 +31,9 @@
       dashKey: "shift",
       bombKey: "e",
       warpKey: "enter",
+      sfxVolume: 0.7,
+      musicVolume: 0.35,
+      muteAudio: false,
     };
   }
 
@@ -53,6 +56,7 @@
     menuScreen: "home",
     runMode: "standard",
     runSeed: "",
+    selectedClass: "striker",
     runSaveAvailable: false,
     time: 0,
     wave: 1,
@@ -91,6 +95,10 @@
     },
     mission: null,
     challenge: null,
+    relicChoices: [],
+    relics: {},
+    biome: null,
+    endgameMutator: null,
     synergies: {},
     upgradeCounts: {},
     bannedUpgrades: {},
@@ -134,6 +142,15 @@
     keyPressed: new Set(),
     mouseDown: false,
     lastMenuTapTs: 0,
+    audio: {
+      ctx: null,
+      master: null,
+      musicGain: null,
+      sfxGain: null,
+      musicOsc: null,
+      musicLfo: null,
+      musicPulse: 0,
+    },
     net: {
       mode: "offline",
       socket: null,
@@ -153,6 +170,32 @@
     { id: "blitz", name: "Blitz", speedMul: 1.22, hpMul: 0.9, spawnMul: 1.2, scoreMul: 1.22, color: "#ffd8a1" },
     { id: "fortified", name: "Fortified", speedMul: 0.9, hpMul: 1.35, spawnMul: 0.9, scoreMul: 1.24, color: "#d4c3ff" },
     { id: "frenzy", name: "Frenzy", speedMul: 1.08, hpMul: 1.08, spawnMul: 1.25, scoreMul: 1.35, color: "#ffb6cf" },
+  ];
+  const shipClasses = {
+    striker: { label: "Striker", apply: () => ((player.damage *= 1.18), (player.speed *= 1.08), (player.maxHp -= 8), (player.hp -= 8)) },
+    vanguard: { label: "Vanguard", apply: () => ((player.maxHp += 26), (player.hp += 26), (player.damageReduction += 0.08), (player.speed *= 0.94)) },
+    engineer: { label: "Engineer", apply: () => ((player.droneCount += 1), (player.shield += 18), (player.bombCdMult *= 0.86)) },
+    phantom: { label: "Phantom", apply: () => ((player.speed *= 1.14), (player.dashCdMult *= 0.78), (player.damage *= 0.92), (player.critChance += 0.04)) },
+  };
+  const biomes = [
+    { id: "nebula", label: "Nebula Drift", bgTop: "#1b2454", bgMid: "#151f45", bgBot: "#0a1431", mods: { scoreMul: 1.06 } },
+    { id: "ember", label: "Ember Belt", bgTop: "#3b1f22", bgMid: "#2a1518", bgBot: "#140c0f", mods: { enemySpeedMul: 1.08, scoreMul: 1.08 } },
+    { id: "glacier", label: "Glacier Void", bgTop: "#11253f", bgMid: "#0e1d33", bgBot: "#091424", mods: { enemySpeedMul: 0.92, enemyHpMul: 1.1 } },
+    { id: "ion", label: "Ion Storm", bgTop: "#152f39", bgMid: "#11252e", bgBot: "#08161e", mods: { projectileSpeedMul: 1.1, scoreMul: 1.1 } },
+  ];
+  const relicDefs = [
+    { id: "sun_core", label: "Sun Core", apply: () => ((player.damage *= 1.25), (state.runMods.enemySpeedMul *= 1.08)) },
+    { id: "chrono_shard", label: "Chrono Shard", apply: () => ((player.fireRateMult *= 1.2), (player.dashCdMult *= 0.85)) },
+    { id: "void_glass", label: "Void Glass", apply: () => ((player.critChance += 0.14), (player.maxHp -= 20), (player.hp = Math.min(player.hp, player.maxHp))) },
+    { id: "forge_plate", label: "Forge Plate", apply: () => ((player.damageReduction += 0.12), (player.speed *= 0.93), (player.shield += 30)) },
+    { id: "swarm_node", label: "Swarm Node", apply: () => ((player.droneCount += 2), (player.wingmanDamageMult *= 1.2)) },
+    { id: "entropy_lens", label: "Entropy Lens", apply: () => ((state.runMods.scoreMul *= 1.2), (state.runMods.spawnMul *= 1.12)) },
+  ];
+  const endgameMutators = [
+    { id: "unstable", label: "Unstable Front", apply: () => ({ enemySpeedMul: 1.12, projectileSpeedMul: 1.1 }) },
+    { id: "colossus", label: "Colossus Surge", apply: () => ({ enemyHpMul: 1.22, spawnMul: 0.9, scoreMul: 1.16 }) },
+    { id: "horde", label: "Horde Breach", apply: () => ({ spawnMul: 1.28, enemySpeedMul: 1.07, scoreMul: 1.12 }) },
+    { id: "glass", label: "Glass Storm", apply: () => ({ enemyHpMul: 0.88, enemySpeedMul: 1.2, scoreMul: 1.2 }) },
   ];
 
   const player = {
@@ -235,6 +278,8 @@
       bestScore: 0,
       bestWave: 0,
       dailyBest: {},
+      dailyStreak: 0,
+      lastDailyClaim: "",
       weaponBest: { pulse: 0, scatter: 0, rail: 0 },
       perks: { hull: 0, cannons: 0, thrusters: 0 },
     };
@@ -250,6 +295,8 @@
         bestScore: Number(parsed.bestScore || 0),
         bestWave: Number(parsed.bestWave || 0),
         dailyBest: parsed.dailyBest && typeof parsed.dailyBest === "object" ? parsed.dailyBest : {},
+        dailyStreak: Number(parsed.dailyStreak || 0),
+        lastDailyClaim: String(parsed.lastDailyClaim || ""),
         weaponBest: {
           pulse: Number(parsed.weaponBest?.pulse || 0),
           scatter: Number(parsed.weaponBest?.scatter || 0),
@@ -291,6 +338,9 @@
         dashKey: ["shift", "q", "mouse"].includes(parsed.dashKey) ? parsed.dashKey : base.dashKey,
         bombKey: ["e", " ", "r"].includes(parsed.bombKey) ? parsed.bombKey : base.bombKey,
         warpKey: ["enter", "v", "g"].includes(parsed.warpKey) ? parsed.warpKey : base.warpKey,
+        sfxVolume: Math.max(0, Math.min(1, Number(parsed.sfxVolume ?? base.sfxVolume))),
+        musicVolume: Math.max(0, Math.min(1, Number(parsed.musicVolume ?? base.musicVolume))),
+        muteAudio: Boolean(parsed.muteAudio ?? base.muteAudio),
       };
     } catch {
       return base;
@@ -324,6 +374,7 @@
       mode: "playing",
       runMode: state.runMode,
       runSeed: state.runSeed,
+      selectedClass: state.selectedClass,
       time: state.time,
       wave: state.wave,
       waveClock: state.waveClock,
@@ -345,8 +396,12 @@
       eventClock: state.eventClock,
       runMods: state.runMods,
       challengeRules: state.challengeRules,
+      biome: state.biome,
+      endgameMutator: state.endgameMutator,
       mission: state.mission,
       challenge: state.challenge,
+      relicChoices: state.relicChoices,
+      relics: state.relics,
       synergies: state.synergies,
       upgradeCounts: state.upgradeCounts,
       bannedUpgrades: state.bannedUpgrades,
@@ -380,6 +435,7 @@
       state.mode = "playing";
       state.runMode = s.runMode || "standard";
       state.runSeed = s.runSeed || "";
+      state.selectedClass = s.selectedClass || "striker";
       if (state.runMode === "daily" && s.challenge?.code) {
         state.challenge = s.challenge;
         setRunSeed(s.challenge.code);
@@ -418,8 +474,12 @@
         projectileSpeedMul: 1,
       };
       state.challengeRules = s.challengeRules || { noBombRefill: false };
+      state.biome = s.biome || biomes[0];
+      state.endgameMutator = s.endgameMutator || null;
       state.mission = s.mission || null;
       state.challenge = s.challenge || buildTodayChallenge();
+      state.relicChoices = Array.isArray(s.relicChoices) ? s.relicChoices : [];
+      state.relics = s.relics || {};
       state.synergies = s.synergies || {};
       state.upgradeCounts = s.upgradeCounts || {};
       state.bannedUpgrades = s.bannedUpgrades || {};
@@ -639,6 +699,144 @@
     if (k === "mouse") return "Mouse";
     if (k === "tab") return "Tab";
     return String(k).toUpperCase();
+  }
+
+  function cycleClass() {
+    const keys = Object.keys(shipClasses);
+    const idx = keys.indexOf(state.selectedClass);
+    state.selectedClass = keys[(idx + 1 + keys.length) % keys.length];
+    pushEvent(`Class selected: ${shipClasses[state.selectedClass].label}`);
+  }
+
+  function pickBiomeForWave(wave) {
+    return biomes[Math.floor(((wave - 1) / 2) % biomes.length)] || biomes[0];
+  }
+
+  function applyBiome(biome) {
+    state.biome = biome;
+    if (!biome) return;
+    if (biome.mods.enemySpeedMul) state.runMods.enemySpeedMul *= biome.mods.enemySpeedMul;
+    if (biome.mods.enemyHpMul) state.runMods.enemyHpMul *= biome.mods.enemyHpMul;
+    if (biome.mods.projectileSpeedMul) state.runMods.projectileSpeedMul *= biome.mods.projectileSpeedMul;
+    if (biome.mods.scoreMul) state.runMods.scoreMul *= biome.mods.scoreMul;
+  }
+
+  function maybeSetEndgameMutator() {
+    if (state.wave < 15) {
+      state.endgameMutator = null;
+      return;
+    }
+    const m = endgameMutators[Math.floor(rng.range(0, endgameMutators.length))];
+    state.endgameMutator = { id: m.id, label: m.label };
+    const mod = m.apply();
+    if (mod.enemySpeedMul) state.runMods.enemySpeedMul *= mod.enemySpeedMul;
+    if (mod.enemyHpMul) state.runMods.enemyHpMul *= mod.enemyHpMul;
+    if (mod.projectileSpeedMul) state.runMods.projectileSpeedMul *= mod.projectileSpeedMul;
+    if (mod.scoreMul) state.runMods.scoreMul *= mod.scoreMul;
+    if (mod.spawnMul) state.runMods.spawnMul *= mod.spawnMul;
+    pushEvent(`Endgame mutator: ${m.label}`);
+    playSfx(140, 0.1, "sawtooth", 0.2);
+  }
+
+  function tryOpenRelicChoice() {
+    if (state.wave > 0 && state.wave % 5 === 0 && state.mode === "playing") {
+      state.mode = "relic";
+      const pool = relicDefs.filter((r) => !state.relics[r.id]);
+      state.relicChoices = [];
+      while (state.relicChoices.length < 3 && pool.length) {
+        const idx = Math.floor(rng.range(0, pool.length));
+        state.relicChoices.push(pool[idx]);
+        pool.splice(idx, 1);
+      }
+    }
+  }
+
+  function pickRelic(i) {
+    if (state.mode !== "relic") return;
+    const relic = state.relicChoices[i];
+    if (!relic) return;
+    state.relics[relic.id] = true;
+    relic.apply();
+    pushEvent(`Relic acquired: ${relic.label}`);
+    state.relicChoices = [];
+    state.mode = "playing";
+    playSfx(520, 0.06, "square", 0.35);
+  }
+
+  function ensureAudio() {
+    if (state.audio.ctx) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      const ctxA = new AC();
+      const master = ctxA.createGain();
+      const musicGain = ctxA.createGain();
+      const sfxGain = ctxA.createGain();
+      musicGain.gain.value = 0;
+      sfxGain.gain.value = 0.0001;
+      musicGain.connect(master);
+      sfxGain.connect(master);
+      master.connect(ctxA.destination);
+      const osc = ctxA.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.value = 120;
+      osc.connect(musicGain);
+      osc.start();
+      const lfo = ctxA.createOscillator();
+      const lfoGain = ctxA.createGain();
+      lfo.frequency.value = 0.18;
+      lfoGain.gain.value = 24;
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.frequency);
+      lfo.start();
+      state.audio.ctx = ctxA;
+      state.audio.master = master;
+      state.audio.musicGain = musicGain;
+      state.audio.sfxGain = sfxGain;
+      state.audio.musicOsc = osc;
+      state.audio.musicLfo = lfo;
+      updateAudioMix(0);
+    } catch {}
+  }
+
+  function updateAudioMix(dt = 0) {
+    ensureAudio();
+    const a = state.audio;
+    if (!a.ctx || !a.musicGain || !a.sfxGain) return;
+    const t = a.ctx.currentTime;
+    const muted = state.settings.muteAudio;
+    const targetSfx = muted ? 0.0001 : Math.max(0.0001, state.settings.sfxVolume * 0.25);
+    const targetMusicBase = muted ? 0.0001 : Math.max(0.0001, state.settings.musicVolume * 0.18);
+    const dangerMul = state.mode === "playing" ? 1 + Math.min(1.2, state.enemies.length / 16 + state.wave * 0.03) : 0.7;
+    const targetMusic = targetMusicBase * dangerMul;
+    a.sfxGain.gain.cancelScheduledValues(t);
+    a.musicGain.gain.cancelScheduledValues(t);
+    a.sfxGain.gain.linearRampToValueAtTime(targetSfx, t + Math.max(0.03, dt));
+    a.musicGain.gain.linearRampToValueAtTime(targetMusic, t + Math.max(0.08, dt));
+    if (a.musicOsc) a.musicOsc.frequency.setTargetAtTime(95 + Math.min(180, state.wave * 4.5 + state.enemies.length * 1.2), t, 0.3);
+  }
+
+  function playSfx(freq = 360, duration = 0.04, type = "triangle", gainMul = 0.2) {
+    ensureAudio();
+    const a = state.audio;
+    if (!a.ctx || !a.sfxGain || state.settings.muteAudio) return;
+    const t = a.ctx.currentTime;
+    const osc = a.ctx.createOscillator();
+    const g = a.ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    g.gain.value = 0.0001;
+    osc.connect(g);
+    g.connect(a.sfxGain);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gainMul), t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+    osc.start(t);
+    osc.stop(t + duration + 0.02);
+  }
+
+  function wakeAudio() {
+    ensureAudio();
+    if (state.audio.ctx && state.audio.ctx.state === "suspended") state.audio.ctx.resume().catch(() => {});
   }
 
   function wsUrl() {
@@ -1141,13 +1339,21 @@
   }
 
   function startWavePackage() {
+    const biome = pickBiomeForWave(state.wave);
+    applyBiome(biome);
+    maybeSetEndgameMutator();
     state.waveModifier = getModifierForWave(state.wave);
     state.mission = createMissionForWave(state.wave);
-    pushEvent(`Wave ${state.wave} started: ${state.waveModifier.name}.`);
+    pushEvent(`Wave ${state.wave} started: ${state.waveModifier.name} | ${biome.label}.`);
+    if (state.wave % 2 === 0) {
+      addEnemy("mini");
+      pushEvent("Mini-boss breach detected.");
+    }
     if (state.wave % 3 === 0) {
       const bossType = bossCycle[(state.wave / 3 - 1) % bossCycle.length];
       addEnemy("boss", { bossType });
       pushEvent(`${bossType[0].toUpperCase()}${bossType.slice(1)} warped in.`);
+      playSfx(160, 0.16, "sawtooth", 0.26);
     }
   }
 
@@ -1197,6 +1403,16 @@
     if (state.runMode === "daily" && state.challenge?.code) {
       const code = state.challenge.code;
       state.meta.dailyBest[code] = Math.max(Number(state.meta.dailyBest[code] || 0), Math.floor(state.score));
+      const today = new Date().toISOString().slice(0, 10);
+      if (state.meta.lastDailyClaim !== today && state.score >= 180) {
+        const prev = state.meta.lastDailyClaim;
+        const y = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        state.meta.dailyStreak = prev === y ? state.meta.dailyStreak + 1 : 1;
+        const dailyBonus = 8 + state.meta.dailyStreak * 2;
+        state.meta.shards += dailyBonus;
+        state.meta.lastDailyClaim = today;
+        pushEvent(`Daily reward +${dailyBonus} shards (streak ${state.meta.dailyStreak}).`);
+      }
     }
     saveMeta();
     pushEvent(`Recovered ${shardsEarned} star shards.`);
@@ -1229,6 +1445,10 @@
     resetRunMods();
     state.challengeRules.noBombRefill = false;
     state.mission = null;
+    state.relicChoices = [];
+    state.relics = {};
+    state.biome = biomes[0];
+    state.endgameMutator = null;
     state.synergies = {};
     state.upgradeCounts = {};
     state.bannedUpgrades = {};
@@ -1316,6 +1536,8 @@
       state.runMode = "standard";
     }
     applyMetaPerks();
+    shipClasses[state.selectedClass]?.apply?.();
+    player.hp = Math.min(player.hp, player.maxHp);
     if (state.runMode === "daily" && state.challenge?.mutators) {
       for (const mut of state.challenge.mutators) mut.apply();
       pushEvent(`Daily challenge: ${state.challenge.labels.join(", ")}`);
@@ -1392,7 +1614,7 @@
   }
 
   function menuButtonRects() {
-    const cont = { x: WIDTH * 0.72, y: HEIGHT * 0.33, w: WIDTH * 0.16, h: 36 };
+    const cont = { x: WIDTH * 0.34, y: HEIGHT * 0.66, w: WIDTH * 0.32, h: 44 };
     const start = { x: WIDTH * 0.34, y: HEIGHT * 0.72, w: WIDTH * 0.32, h: 58 };
     const settings = { x: WIDTH * 0.34, y: HEIGHT * 0.8, w: WIDTH * 0.32, h: 46 };
     const codex = { x: WIDTH * 0.34, y: HEIGHT * 0.86, w: WIDTH * 0.32, h: 40 };
@@ -1414,6 +1636,11 @@
     const bindWarp = { x: WIDTH * 0.8, y: HEIGHT * 0.605, w: WIDTH * 0.075, h: 34 };
     const preset = { x: WIDTH * 0.63, y: HEIGHT * 0.655, w: WIDTH * 0.11, h: 34 };
     const resetSettings = { x: WIDTH * 0.76, y: HEIGHT * 0.655, w: WIDTH * 0.11, h: 34 };
+    const sfxDown = { x: WIDTH * 0.63, y: HEIGHT * 0.705, w: WIDTH * 0.11, h: 30 };
+    const sfxUp = { x: WIDTH * 0.76, y: HEIGHT * 0.705, w: WIDTH * 0.11, h: 30 };
+    const musicDown = { x: WIDTH * 0.63, y: HEIGHT * 0.742, w: WIDTH * 0.11, h: 30 };
+    const musicUp = { x: WIDTH * 0.76, y: HEIGHT * 0.742, w: WIDTH * 0.11, h: 30 };
+    const muteBtn = { x: WIDTH * 0.63, y: HEIGHT * 0.779, w: WIDTH * 0.24, h: 30 };
     return {
       start,
       cont,
@@ -1437,6 +1664,11 @@
       bindWarp,
       preset,
       resetSettings,
+      sfxDown,
+      sfxUp,
+      musicDown,
+      musicUp,
+      muteBtn,
     };
   }
 
@@ -1449,7 +1681,6 @@
     const btn = menuButtonRects();
     if (state.menuScreen === "home") {
       if (pointInRect(pt, btn.start)) resetGame();
-      else if (pointInRect(pt, btn.cont)) continueSavedRun();
       else if (pointInRect(pt, btn.settings)) state.menuScreen = "settings";
       else if (pointInRect(pt, btn.codex)) state.menuScreen = "codex";
       else if (pointInRect(pt, btn.daily)) toggleRunMode();
@@ -1483,6 +1714,22 @@
       else if (pointInRect(pt, btn.bindWarp)) cycleBinding("warp");
       else if (pointInRect(pt, btn.preset)) cycleAccessibilityPreset();
       else if (pointInRect(pt, btn.resetSettings)) resetSettingsDefaults();
+      else if (pointInRect(pt, btn.sfxDown)) {
+        state.settings.sfxVolume = Math.max(0, state.settings.sfxVolume - 0.05);
+        saveSettings();
+      } else if (pointInRect(pt, btn.sfxUp)) {
+        state.settings.sfxVolume = Math.min(1, state.settings.sfxVolume + 0.05);
+        saveSettings();
+      } else if (pointInRect(pt, btn.musicDown)) {
+        state.settings.musicVolume = Math.max(0, state.settings.musicVolume - 0.05);
+        saveSettings();
+      } else if (pointInRect(pt, btn.musicUp)) {
+        state.settings.musicVolume = Math.min(1, state.settings.musicVolume + 0.05);
+        saveSettings();
+      } else if (pointInRect(pt, btn.muteBtn)) {
+        state.settings.muteAudio = !state.settings.muteAudio;
+        saveSettings();
+      }
       else return false;
     } else {
       if (pointInRect(pt, btn.back)) state.menuScreen = "home";
@@ -1501,6 +1748,7 @@
     state.pointer.inside = false;
   });
   canvas.addEventListener("mousedown", (evt) => {
+    wakeAudio();
     if (evt.button === 0) state.mouseDown = true;
     const pt = toCanvasCoords(evt);
     if (handleMenuTap(pt)) {
@@ -1516,6 +1764,7 @@
     "touchstart",
     (evt) => {
       evt.preventDefault();
+      wakeAudio();
       state.touch.enabled = true;
       for (const t of evt.changedTouches) {
         const pt = toCanvasCoords(t);
@@ -1581,6 +1830,7 @@
   );
 
   window.addEventListener("keydown", (evt) => {
+    wakeAudio();
     const k = evt.key.toLowerCase();
     state.keysDown.add(k);
     state.keyPressed.add(k);
@@ -1597,6 +1847,7 @@
     if (state.mode === "menu" && (k === "enter" || k === " ")) resetGame();
     if (state.mode === "menu" && k === "y") toggleRunMode();
     if (state.mode === "menu" && k === "k") state.menuScreen = "codex";
+    if (state.mode === "menu" && k === "n") cycleClass();
     if (state.mode === "menu" && state.menuScreen === "home" && k === "c") continueSavedRun();
     if (state.mode === "menu" && k === "v") setCustomSeedFromPrompt();
     if (state.mode === "menu" && k === "b") copyRunCode();
@@ -1620,6 +1871,26 @@
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "z") cycleQualityMode();
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "a") cycleAccessibilityPreset();
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "0") resetSettingsDefaults();
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "," || k === "<")) {
+      state.settings.sfxVolume = Math.max(0, state.settings.sfxVolume - 0.05);
+      saveSettings();
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "." || k === ">")) {
+      state.settings.sfxVolume = Math.min(1, state.settings.sfxVolume + 0.05);
+      saveSettings();
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === ";" || k === ":")) {
+      state.settings.musicVolume = Math.max(0, state.settings.musicVolume - 0.05);
+      saveSettings();
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && (k === "'" || k === "\"")) {
+      state.settings.musicVolume = Math.min(1, state.settings.musicVolume + 0.05);
+      saveSettings();
+    }
+    if (state.mode === "menu" && state.menuScreen === "settings" && k === "m") {
+      state.settings.muteAudio = !state.settings.muteAudio;
+      saveSettings();
+    }
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "u") cycleBinding("dash");
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "i") cycleBinding("bomb");
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "o") cycleBinding("warp");
@@ -1632,6 +1903,7 @@
     if (k === "x" && state.net.mode !== "offline") resetNetSession();
     if (state.mode === "gameover" && k === "r") resetGame();
     if (state.mode === "levelup" && ["1", "2", "3"].includes(k)) pickUpgrade(Number(k) - 1);
+    if (state.mode === "relic" && ["1", "2", "3"].includes(k)) pickRelic(Number(k) - 1);
     if (state.mode === "levelup" && k === "4") rerollChoices(false);
     if (state.mode === "levelup" && ["5", "6", "7"].includes(k)) banishChoice(Number(k) - 5);
     if (["1", "2", "3"].includes(k) && state.mode === "playing") {
@@ -1678,6 +1950,19 @@
         }
       }
     }
+    if (state.mode === "relic") {
+      const pt = toCanvasCoords(evt);
+      for (let i = 0; i < 3; i++) {
+        const x = WIDTH * 0.16 + i * 310;
+        const y = HEIGHT * 0.34;
+        const w = 260;
+        const h = 180;
+        if (pt.x >= x && pt.x <= x + w && pt.y >= y && pt.y <= y + h) {
+          pickRelic(i);
+          break;
+        }
+      }
+    }
   });
 
   function toggleFullscreen() {
@@ -1720,6 +2005,10 @@
       splitter: { hp: 46, speed: 80, r: 15, color: "#64ffc5", value: 18, split: true },
       sniper: { hp: 30, speed: 56, r: 13, color: "#ffda7d", value: 24, shoot: 2.7, sniper: true },
       leech: { hp: 42, speed: 118, r: 11, color: "#8ef2ff", value: 15, leech: true },
+      shield_carrier: { hp: 70, speed: 70, r: 16, color: "#9fd1ff", value: 28, carrier: true },
+      kamikaze: { hp: 18, speed: 145, r: 10, color: "#ff8e7d", value: 19, kamikaze: true },
+      summoner: { hp: 58, speed: 64, r: 17, color: "#c7a1ff", value: 34, summon: 4.2, summoner: true },
+      mini: { hp: 520, speed: 54, r: 28, color: "#ffd081", value: 180, shoot: 1.25, mini: true },
       boss: {
         dreadnought: { hp: 880, speed: 34, r: 40, color: "#ff4d7f", value: 520, shoot: 1.6, burst: 2.9 },
         lancer: { hp: 760, speed: 56, r: 34, color: "#ff9c5d", value: 540, shoot: 0.85, burst: 2.2 },
@@ -1728,7 +2017,7 @@
       },
     };
     const d = kind === "boss" ? defs.boss[bossType] || defs.boss.dreadnought : defs[kind];
-    const eliteChance = kind === "boss" ? 0 : Math.min(0.42, Math.max(0, (state.wave - 4) * 0.045));
+    const eliteChance = kind === "boss" || kind === "mini" ? 0 : Math.min(0.42, Math.max(0, (state.wave - 4) * 0.045));
     const elite = rng.next() < eliteChance;
     const baseHp = d.hp + state.wave * (kind === "tank" ? 5 : kind === "boss" ? 34 : 2);
     const hpMul = kind === "boss" ? run.enemyHpMul * 1.05 : modifier.hpMul * run.enemyHpMul;
@@ -1753,10 +2042,14 @@
       boss: kind === "boss",
       bossType: kind === "boss" ? bossType : "",
       burstCd: kind === "boss" ? d.burst : 999,
-      summonCd: kind === "boss" && d.summon ? d.summon : 999,
+      summonCd: d.summon ? d.summon : 999,
       spiralOffset: rng.range(0, TAU),
       sniper: Boolean(d.sniper),
       leech: Boolean(d.leech),
+      carrier: Boolean(d.carrier),
+      kamikaze: Boolean(d.kamikaze),
+      summoner: Boolean(d.summoner),
+      mini: Boolean(d.mini),
       elite,
       telegraphShot: 0,
       telegraphBurst: 0,
@@ -1779,6 +2072,9 @@
       if (state.wave >= 4 && rng.next() < 0.4) addEnemy("splitter");
       if (state.wave >= 4 && rng.next() < 0.32) addEnemy("sniper");
       if (state.wave >= 3 && rng.next() < 0.35) addEnemy("leech");
+      if (state.wave >= 6 && rng.next() < 0.3) addEnemy("shield_carrier");
+      if (state.wave >= 6 && rng.next() < 0.33) addEnemy("kamikaze");
+      if (state.wave >= 8 && rng.next() < 0.25) addEnemy("summoner");
       if (state.wave >= 5 && rng.next() < 0.28) addEnemy("tank");
     }
     if (state.waveClock >= state.waveLength) {
@@ -1788,6 +2084,7 @@
       if (!state.challengeRules.noBombRefill) player.bombs += 1;
       state.flash = 0.35;
       startWavePackage();
+      tryOpenRelicChoice();
     }
   }
 
@@ -1848,6 +2145,7 @@
     const shots = w.shots + player.multishot;
     const fireRate = w.cooldown / (player.fireRateMult * (state.overclock > 0 ? 1.45 : 1));
     player.fireCd = fireRate;
+    playSfx(state.selectedWeapon === "rail" ? 280 : state.selectedWeapon === "scatter" ? 240 : 330, 0.03, "triangle", 0.08);
     for (let i = 0; i < shots; i++) {
       const t = shots === 1 ? 0 : i / (shots - 1) - 0.5;
       const ang = Math.atan2(dir.dy, dir.dx) + t * w.spread * 2;
@@ -1896,6 +2194,7 @@
       remaining -= absorbed;
     }
     if (remaining > 0) player.hp -= remaining;
+    playSfx(170, 0.06, "sawtooth", 0.18);
     state.cameraShake = Math.min(12, state.cameraShake + 4);
     state.flash = Math.min(0.26, state.flash + 0.14);
     if (player.hp <= 0) {
@@ -1947,6 +2246,13 @@
       player.shield += 25;
       state.flash = Math.max(state.flash, 0.36);
       pushEvent(`${enemy.bossType || "Boss"} destroyed: +1 bomb, +25 shield.`);
+      playSfx(120, 0.14, "square", 0.26);
+    }
+    if (enemy.mini) {
+      player.bombs += 1;
+      player.shield += 12;
+      pushEvent("Mini-boss down: +1 bomb, +12 shield.");
+      playSfx(210, 0.1, "triangle", 0.2);
     }
     if (player.streakGuard > 0 && state.streak > 0 && state.streak % 15 === 0) {
       player.shield += 4 * player.streakGuard;
@@ -2048,6 +2354,7 @@
     choice.apply();
     state.upgradeCounts[choice.id] = (state.upgradeCounts[choice.id] || 0) + 1;
     checkSynergies();
+    playSfx(450, 0.05, "square", 0.2);
     state.mode = "playing";
     state.choices = [];
   }
@@ -2081,6 +2388,7 @@
       }
     }
     spawnParticles(player.x, player.y, "#f7f6c7", 40, 300);
+    playSfx(150, 0.12, "sawtooth", 0.28);
     pushEvent("Nova bomb detonated.");
   }
 
@@ -2249,7 +2557,13 @@
           const crit = rng.next() < player.critChance;
           const bossMul = e.boss ? player.bossDamageMult : 1;
           const dmg = p.damage * (crit ? player.critMult : 1) * bossMul;
-          e.hp -= dmg;
+          let dealt = dmg;
+          if ((e.shield || 0) > 0) {
+            const absorb = Math.min(e.shield, dealt);
+            e.shield -= absorb;
+            dealt -= absorb;
+          }
+          if (dealt > 0) e.hp -= dealt;
           spawnDamageNumber(e.x, e.y - 10, dmg, crit ? "#ffe38a" : "#e5f0ff");
           if (p.owner !== "wingman" && player.lifesteal > 0) {
             player.hp = Math.min(player.maxHp, player.hp + dmg * player.lifesteal);
@@ -2325,6 +2639,20 @@
       e.hitFlash = Math.max(0, e.hitFlash - dt);
       e.telegraphShot = Math.max(0, (e.telegraphShot || 0) - dt);
       e.telegraphBurst = Math.max(0, (e.telegraphBurst || 0) - dt);
+      if (e.carrier) {
+        for (const n of state.enemies) {
+          if (n === e || n.boss) continue;
+          const dn = Math.hypot(n.x - e.x, n.y - e.y);
+          if (dn < 120) n.shield = Math.max(n.shield || 0, 16);
+        }
+      }
+      if (e.summoner) {
+        e.summonCd -= dt * freezeMul;
+        if (e.summonCd <= 0) {
+          e.summonCd = 4.6;
+          addEnemy(rng.next() < 0.5 ? "chaser" : "kamikaze");
+        }
+      }
       if (e.kind === "shooter" && d > 120) {
         e.shootCd -= dt * freezeMul;
         if (e.shootCd <= 0) {
@@ -2353,6 +2681,27 @@
             life: 4.8,
             damage: (12 + state.wave * 0.95) * (e.elite ? 1.28 : 1),
           });
+        }
+      }
+      if (e.mini) {
+        e.shootCd -= dt * freezeMul;
+        if (e.shootCd <= 0) {
+          e.shootCd = 0.95;
+          const count = 6;
+          const base = Math.atan2(uy, ux);
+          for (let i = 0; i < count; i++) {
+            const a = base - 0.4 + (i / (count - 1)) * 0.8;
+            state.enemyProjectiles.push({
+              x: e.x,
+              y: e.y,
+              vx: Math.cos(a) * 290 * state.runMods.projectileSpeedMul,
+              vy: Math.sin(a) * 290 * state.runMods.projectileSpeedMul,
+              r: 7,
+              life: 4.4,
+              damage: 12 + state.wave * 0.9,
+            });
+          }
+          playSfx(220, 0.05, "sawtooth", 0.13);
         }
       }
       if (e.boss) {
@@ -2488,6 +2837,16 @@
             e.hp = Math.min(e.maxHp, e.hp + 12 + state.wave * 0.8);
           }
           player.contactDamageCd = e.boss ? 0.5 : 0.34;
+          if (e.kamikaze) {
+            for (let i = state.enemies.length - 1; i >= 0; i--) {
+              if (state.enemies[i] === e) {
+                state.enemies.splice(i, 1);
+                break;
+              }
+            }
+            spawnParticles(player.x, player.y, "#ffbda9", 28, 230);
+            damagePlayer(12 + state.wave * 1.1);
+          }
         }
       }
       if (state.coopJoined) {
@@ -2588,6 +2947,7 @@
   }
 
   function update(dt) {
+    updateAudioMix(dt);
     applyTouchDerivedInputs();
     if (state.net.mode === "guest") {
       state.net.sendTimer += dt;
@@ -2640,14 +3000,15 @@
 
   function drawBackground() {
     const g = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+    const b = state.biome || biomes[0];
     if (state.settings.colorblind) {
       g.addColorStop(0, "#12223c");
       g.addColorStop(0.6, "#0d1f2f");
       g.addColorStop(1, "#08131f");
     } else {
-      g.addColorStop(0, "#101a36");
-      g.addColorStop(0.6, "#0a1026");
-      g.addColorStop(1, "#060814");
+      g.addColorStop(0, b.bgTop);
+      g.addColorStop(0.6, b.bgMid);
+      g.addColorStop(1, b.bgBot);
     }
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -2781,6 +3142,10 @@
       ctx.fillRect(e.x - hpw * 0.5, e.y - e.r - 13, hpw, 4);
       ctx.fillStyle = e.boss ? "#ffd4df" : "#b4ffd0";
       ctx.fillRect(e.x - hpw * 0.5, e.y - e.r - 13, hpw * Math.max(0, e.hp / e.maxHp), 4);
+      if ((e.shield || 0) > 0) {
+        ctx.fillStyle = "rgba(134, 206, 255, 0.95)";
+        ctx.fillRect(e.x - hpw * 0.5, e.y - e.r - 18, Math.min(hpw, (e.shield / 24) * hpw), 3);
+      }
     }
     for (let i = 0; i < player.droneCount; i++) {
       const a = state.time * (1.8 + i * 0.14) + (TAU / player.droneCount) * i;
@@ -2870,6 +3235,14 @@
       ctx.fillStyle = "#ffd6ab";
       ctx.fillText(`Anomaly: ${state.activeEvent.label} ${state.activeEvent.timeLeft.toFixed(1)}s`, 390, 168);
     }
+    if (state.biome) {
+      ctx.fillStyle = "#9fe0ff";
+      ctx.fillText(`Biome: ${state.biome.label}`, 390, 141);
+    }
+    if (state.endgameMutator) {
+      ctx.fillStyle = "#ffcc9c";
+      ctx.fillText(`Endgame: ${state.endgameMutator.label}`, 390, 214);
+    }
     if (state.streak > 0) {
       ctx.fillStyle = "#ffe9a8";
       ctx.fillText(`Streak x${state.streak}`, 390, 195);
@@ -2907,6 +3280,11 @@
       ctx.fillStyle = "rgba(173, 194, 255, 0.9)";
       ctx.fillText(`Cryo Field ${state.freeze.toFixed(1)}s`, WIDTH * 0.5 + 70, 28);
     }
+    const relicCount = Object.keys(state.relics).length;
+    if (relicCount > 0) {
+      ctx.fillStyle = "#d8ffb4";
+      ctx.fillText(`Relics ${relicCount}`, WIDTH - 140, 178);
+    }
   }
 
   function drawMenu() {
@@ -2930,6 +3308,7 @@
     ctx.fillStyle = "#e7f0ff";
     ctx.font = "22px Trebuchet MS";
     if (state.menuScreen === "home") {
+      ctx.font = "20px Trebuchet MS";
       ctx.fillText(
         `WASD move | Mouse aim | Auto-fire always on | Dash ${displayKey(state.settings.dashKey)} | Bomb ${displayKey(
           state.settings.bombKey
@@ -2940,14 +3319,14 @@
       ctx.fillText(`Co-op ${state.coopJoined ? "ON" : "OFF"} (J) | P2: IJKL move, O dash, U bomb`, WIDTH * 0.13, HEIGHT * 0.44);
       ctx.fillText("Online: H host room | G join room | X disconnect", WIDTH * 0.13, HEIGHT * 0.49);
       ctx.fillText(`Run mode: ${state.runMode.toUpperCase()} (Y toggle daily, V seed, B copy code)`, WIDTH * 0.13, HEIGHT * 0.54);
-      ctx.fillText(`Continue hotkey: C`, WIDTH * 0.72, HEIGHT * 0.385);
+      ctx.fillText(`Ship class: ${shipClasses[state.selectedClass]?.label || "Striker"} (N) | Continue (C)`, WIDTH * 0.13, HEIGHT * 0.59);
       if (state.challenge?.code) {
-        ctx.fillText(`Daily ${state.challenge.code} | ${state.challenge.labels.join(" / ")}`, WIDTH * 0.13, HEIGHT * 0.59);
+        ctx.fillText(`Daily ${state.challenge.code} | ${state.challenge.labels.join(" / ")}`, WIDTH * 0.13, HEIGHT * 0.63);
       }
       ctx.fillText(
         `Shards ${state.meta?.shards || 0} | Best ${state.meta?.bestScore || 0} pts wave ${state.meta?.bestWave || 0}`,
         WIDTH * 0.13,
-        HEIGHT * 0.64
+        HEIGHT * 0.655
       );
 
       ctx.fillStyle = "rgba(255, 238, 168, 0.95)";
@@ -2961,12 +3340,6 @@
       ctx.fillStyle = "#122947";
       ctx.font = "24px Trebuchet MS";
       ctx.fillText("Open Settings", btn.settings.x + btn.settings.w * 0.28, btn.settings.y + 30);
-
-      ctx.fillStyle = state.runSaveAvailable ? "rgba(160, 241, 183, 0.95)" : "rgba(95, 118, 137, 0.85)";
-      ctx.fillRect(btn.cont.x, btn.cont.y, btn.cont.w, btn.cont.h);
-      ctx.fillStyle = "#122947";
-      ctx.font = "16px Trebuchet MS";
-      ctx.fillText(state.runSaveAvailable ? "Continue (C)" : "No Save", btn.cont.x + btn.cont.w * 0.2, btn.cont.y + 24);
 
       ctx.fillStyle = "rgba(145, 217, 255, 0.95)";
       ctx.fillRect(btn.codex.x, btn.codex.y, btn.codex.w, btn.codex.h);
@@ -3005,6 +3378,7 @@
         WIDTH * 0.13,
         HEIGHT * 0.725
       );
+      ctx.fillText(`Audio: SFX ${(state.settings.sfxVolume * 100).toFixed(0)}% , Music ${(state.settings.musicVolume * 100).toFixed(0)}% , Mute ${state.settings.muteAudio ? "ON" : "OFF"}`, WIDTH * 0.13, HEIGHT * 0.755);
 
       ctx.fillStyle = "rgba(143, 190, 255, 0.95)";
       ctx.fillRect(btn.back.x, btn.back.y, btn.back.w, btn.back.h);
@@ -3034,6 +3408,12 @@
       ctx.fillRect(btn.preset.x, btn.preset.y, btn.preset.w, btn.preset.h);
       ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
       ctx.fillRect(btn.resetSettings.x, btn.resetSettings.y, btn.resetSettings.w, btn.resetSettings.h);
+      ctx.fillRect(btn.sfxDown.x, btn.sfxDown.y, btn.sfxDown.w, btn.sfxDown.h);
+      ctx.fillRect(btn.sfxUp.x, btn.sfxUp.y, btn.sfxUp.w, btn.sfxUp.h);
+      ctx.fillRect(btn.musicDown.x, btn.musicDown.y, btn.musicDown.w, btn.musicDown.h);
+      ctx.fillRect(btn.musicUp.x, btn.musicUp.y, btn.musicUp.w, btn.musicUp.h);
+      ctx.fillStyle = state.settings.muteAudio ? "rgba(141, 222, 178, 0.95)" : "rgba(124, 171, 255, 0.95)";
+      ctx.fillRect(btn.muteBtn.x, btn.muteBtn.y, btn.muteBtn.w, btn.muteBtn.h);
       ctx.fillStyle = "#122947";
       ctx.fillText("Touch", btn.touchToggle.x + 30, btn.touchToggle.y + 21);
       ctx.fillText("Shake-", btn.shakeDown.x + 25, btn.shakeDown.y + 21);
@@ -3048,6 +3428,11 @@
       ctx.fillText("Warp", btn.bindWarp.x + 21, btn.bindWarp.y + 21);
       ctx.fillText("Preset", btn.preset.x + 23, btn.preset.y + 21);
       ctx.fillText("Reset", btn.resetSettings.x + 28, btn.resetSettings.y + 21);
+      ctx.fillText("SFX-", btn.sfxDown.x + 34, btn.sfxDown.y + 20);
+      ctx.fillText("SFX+", btn.sfxUp.x + 34, btn.sfxUp.y + 20);
+      ctx.fillText("MUS-", btn.musicDown.x + 30, btn.musicDown.y + 20);
+      ctx.fillText("MUS+", btn.musicUp.x + 30, btn.musicUp.y + 20);
+      ctx.fillText("Mute", btn.muteBtn.x + 95, btn.muteBtn.y + 20);
     } else {
       const discovered = Object.keys(state.synergies);
       ctx.fillStyle = "#d9e8ff";
@@ -3146,6 +3531,39 @@
     ctx.fillText(`Banish token(s): ${player.banishes} (5/6/7 or X buttons)`, WIDTH * 0.46, HEIGHT * 0.815);
   }
 
+  function drawRelicSelect() {
+    ctx.fillStyle = "rgba(7, 10, 24, 0.78)";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillStyle = "#f6f4c9";
+    ctx.font = "54px Trebuchet MS";
+    ctx.fillText("RELIC DISCOVERY", WIDTH * 0.32, HEIGHT * 0.2);
+    ctx.font = "24px Trebuchet MS";
+    ctx.fillStyle = "#d8e7ff";
+    ctx.fillText("Pick a relic (1/2/3)", WIDTH * 0.41, HEIGHT * 0.26);
+    for (let i = 0; i < 3; i++) {
+      const r = state.relicChoices[i];
+      const x = WIDTH * 0.16 + i * 310;
+      const y = HEIGHT * 0.34;
+      const w = 260;
+      const h = 180;
+      ctx.fillStyle = "rgba(26, 39, 70, 0.94)";
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = "#b1d6ff";
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = "#f2e4a5";
+      ctx.font = "24px Trebuchet MS";
+      ctx.fillText(`${i + 1}`, x + 16, y + 32);
+      if (!r) continue;
+      ctx.fillStyle = "#eff6ff";
+      ctx.font = "28px Trebuchet MS";
+      ctx.fillText(r.label, x + 18, y + 72);
+      ctx.font = "18px Trebuchet MS";
+      ctx.fillStyle = "#b8cbe9";
+      const detail = r.id === "void_glass" ? "High crit, lower max HP" : r.id === "forge_plate" ? "Tank up, slower ship" : "Major run boost";
+      ctx.fillText(detail, x + 18, y + 112);
+    }
+  }
+
   function drawGameOver() {
     ctx.fillStyle = "rgba(8, 0, 12, 0.7)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -3171,6 +3589,7 @@
       WIDTH * 0.2,
       HEIGHT * 0.7
     );
+    ctx.fillText(`Daily streak ${state.meta?.dailyStreak || 0}`, WIDTH * 0.2, HEIGHT * 0.74);
   }
 
   function drawOnlineOverlay() {
@@ -3238,6 +3657,7 @@
     if (state.mode === "menu") drawMenu();
     if (state.mode === "paused") drawPause();
     if (state.mode === "levelup") drawLevelUp();
+    if (state.mode === "relic") drawRelicSelect();
     if (state.mode === "gameover") drawGameOver();
     if (state.mode !== "menu") drawHud();
     drawOnlineOverlay();
@@ -3255,6 +3675,7 @@
       mode: state.mode,
       runMode: state.runMode,
       runSeed: state.runSeed,
+      shipClass: state.selectedClass,
       wave: state.wave,
       waveProgressSeconds: Number(state.waveClock.toFixed(2)),
       waveModifier: state.waveModifier ? state.waveModifier.id : "standard",
@@ -3274,7 +3695,13 @@
         accessibilityPreset: state.settings.accessibilityPreset,
         aimAssist: Number(state.settings.aimAssist.toFixed(2)),
         screenShake: Number(state.settings.screenShake.toFixed(2)),
+        sfxVolume: Number(state.settings.sfxVolume.toFixed(2)),
+        musicVolume: Number(state.settings.musicVolume.toFixed(2)),
+        muteAudio: state.settings.muteAudio,
       },
+      biome: state.biome ? state.biome.id : "nebula",
+      endgameMutator: state.endgameMutator ? state.endgameMutator.id : null,
+      relicCount: Object.keys(state.relics).length,
       performance: {
         avgFps: Number(state.perf.avgFps.toFixed(1)),
         adaptiveEnemyCapMul: Number(state.perf.adaptiveEnemyCapMul.toFixed(2)),
@@ -3358,6 +3785,7 @@
         bestScore: state.meta?.bestScore || 0,
         bestWave: state.meta?.bestWave || 0,
         dailyBestToday: state.meta?.dailyBest?.[state.challenge?.code || ""] || 0,
+        dailyStreak: state.meta?.dailyStreak || 0,
         weaponBest: state.meta?.weaponBest || { pulse: 0, scatter: 0, rail: 0 },
         perks: state.meta?.perks || { hull: 0, cannons: 0, thrusters: 0 },
       },

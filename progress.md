@@ -231,3 +231,34 @@ Original prompt: Create a really fun really really high quality game i can play 
   - `node --check game.js` passed.
   - Playwright menu/gameplay regressions rerun and passed.
   - State output confirms run-save availability and stable gameplay payloads.
+- Implemented requested 8-feature expansion pass:
+  - Ship classes:
+    - Added selectable class (`N` to cycle in menu): Striker, Vanguard, Engineer, Phantom.
+    - Class modifiers now apply at run start.
+  - Relics system:
+    - Added relic pool and relic selection screen (`mode: relic`).
+    - Relic choices appear at wave milestones (every 5 waves).
+    - Pick via keys `1/2/3` or click card.
+  - Mini-boss waves:
+    - Added `mini` enemy type and mini-boss spawn on every even wave.
+  - Additional enemy mechanics:
+    - Added `shield_carrier` (grants nearby enemy shields).
+    - Added `kamikaze` (explodes on contact for extra damage).
+    - Added `summoner` (periodically spawns additional enemies).
+  - Biome rotation:
+    - Added biome set with rotating wave-based assignment and background/theme modifiers.
+    - Wave start events now report biome.
+  - Daily reward loop:
+    - Added daily streak tracking and first-daily-run reward handling in meta (`dailyStreak`, `lastDailyClaim`).
+  - Stronger endgame scaling (wave 15+):
+    - Added endgame mutator pool with wave-level mutator assignment and scaling modifiers.
+  - Audio pass:
+    - Added WebAudio ambient layer + SFX beeps for key actions (shoot, hit, bombs, bosses/relics).
+    - Added audio settings: SFX volume, music volume, mute, with UI controls and persistence.
+- Additional integration updates:
+  - Expanded save/load payload to include new run systems (class, relics, biome, mutator).
+  - Expanded `render_game_to_text` to include class/biome/mutator/relic count/audio + streak metadata.
+- Validation:
+  - `node --check game.js` passed after each major patch batch.
+  - Playwright menu and sustained gameplay loops rerun successfully.
+  - No console/page error artifacts in latest output checks.
