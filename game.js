@@ -54,6 +54,7 @@
   const state = {
     mode: "menu",
     menuScreen: "home",
+    codexTab: "synergy",
     runMode: "standard",
     runSeed: "",
     selectedClass: "striker",
@@ -110,6 +111,9 @@
     overclock: 0,
     freeze: 0,
     danger: 0,
+    heat: 0,
+    heatTier: 0,
+    bounty: null,
     waveSkipCd: 0,
     pointer: { x: WIDTH * 0.5, y: HEIGHT * 0.5, inside: false },
     coopJoined: true,
@@ -197,6 +201,11 @@
     { id: "horde", label: "Horde Breach", apply: () => ({ spawnMul: 1.28, enemySpeedMul: 1.07, scoreMul: 1.12 }) },
     { id: "glass", label: "Glass Storm", apply: () => ({ enemyHpMul: 0.88, enemySpeedMul: 1.2, scoreMul: 1.2 }) },
   ];
+  const masteryThresholds = {
+    pulse: [120, 320, 650],
+    scatter: [90, 240, 520],
+    rail: [70, 180, 420],
+  };
 
   const player = {
     x: WIDTH * 0.5,
@@ -281,6 +290,7 @@
       dailyStreak: 0,
       lastDailyClaim: "",
       weaponBest: { pulse: 0, scatter: 0, rail: 0 },
+      masteryKills: { pulse: 0, scatter: 0, rail: 0 },
       perks: { hull: 0, cannons: 0, thrusters: 0 },
     };
   }
@@ -301,6 +311,11 @@
           pulse: Number(parsed.weaponBest?.pulse || 0),
           scatter: Number(parsed.weaponBest?.scatter || 0),
           rail: Number(parsed.weaponBest?.rail || 0),
+        },
+        masteryKills: {
+          pulse: Number(parsed.masteryKills?.pulse || 0),
+          scatter: Number(parsed.masteryKills?.scatter || 0),
+          rail: Number(parsed.masteryKills?.rail || 0),
         },
         perks: {
           hull: Number(parsed.perks?.hull || 0),
@@ -410,6 +425,9 @@
       overclock: state.overclock,
       freeze: state.freeze,
       danger: state.danger,
+      heat: state.heat,
+      heatTier: state.heatTier,
+      bounty: state.bounty,
       waveSkipCd: state.waveSkipCd,
       coopJoined: state.coopJoined,
       player: { ...player },
@@ -488,6 +506,9 @@
       state.overclock = Number(s.overclock || 0);
       state.freeze = Number(s.freeze || 0);
       state.danger = Number(s.danger || 0);
+      state.heat = Number(s.heat || 0);
+      state.heatTier = Number(s.heatTier || 0);
+      state.bounty = s.bounty || null;
       state.waveSkipCd = Number(s.waveSkipCd || 0);
       state.coopJoined = Boolean(s.coopJoined);
       Object.assign(player, s.player || {});
@@ -906,6 +927,9 @@
       overclock: state.overclock,
       freeze: state.freeze,
       danger: state.danger,
+      heat: state.heat,
+      heatTier: state.heatTier,
+      bounty: state.bounty,
       waveSkipCd: state.waveSkipCd,
       pointer: state.pointer,
       coopJoined: state.coopJoined,
@@ -937,6 +961,9 @@
     state.overclock = snap.overclock || 0;
     state.freeze = snap.freeze || 0;
     state.danger = snap.danger || 0;
+    state.heat = snap.heat || 0;
+    state.heatTier = snap.heatTier || 0;
+    state.bounty = snap.bounty || null;
     state.waveSkipCd = snap.waveSkipCd || 0;
     state.pointer = snap.pointer || state.pointer;
     state.coopJoined = Boolean(snap.coopJoined);
@@ -1287,6 +1314,34 @@
     }
   }
 
+  function getWeaponMasteryTier(weaponId) {
+    const kills = Number(state.meta?.masteryKills?.[weaponId] || 0);
+    const marks = masteryThresholds[weaponId] || [];
+    let tier = 0;
+    for (const threshold of marks) if (kills >= threshold) tier += 1;
+    return tier;
+  }
+
+  function getMasteryDamageMul(weaponId) {
+    return 1 + getWeaponMasteryTier(weaponId) * 0.045;
+  }
+
+  function masteryBonusLines(weaponId) {
+    const tier = getWeaponMasteryTier(weaponId);
+    const lines = [`Damage bonus: +${(tier * 4.5).toFixed(1)}% (${tier}/3 tiers)`];
+    if (weaponId === "scatter") {
+      lines.push(tier >= 2 ? "Tier 2+: +1 pellet per shot (active)" : "Tier 2+: +1 pellet per shot");
+    }
+    if (weaponId === "rail") {
+      lines.push(tier >= 1 ? "Tier 1+: +3% crit chance (active)" : "Tier 1+: +3% crit chance");
+      lines.push(tier >= 2 ? "Tier 2+: +0.25 crit multiplier (active)" : "Tier 2+: +0.25 crit multiplier");
+    }
+    if (weaponId === "pulse") {
+      lines.push("Pure DPS scaling weapon (all tiers apply to base damage).");
+    }
+    return lines;
+  }
+
   function getModifierForWave(wave) {
     if (wave <= 1) return waveModifiers[0];
     const weighted = wave <= 2 ? waveModifiers.slice(0, 2) : waveModifiers;
@@ -1325,6 +1380,77 @@
     };
   }
 
+  function createBountyForWave(wave) {
+    if (wave < 2) return null;
+    const defs = [
+      {
+        id: "shooter",
+        minWave: 3,
+        label: "Sharpshooter Sweep",
+        target: 3 + Math.floor(wave * 0.5),
+        reward: { score: 120 + wave * 24, xp: 22 + wave * 5, shield: 10, rerolls: 0 },
+      },
+      {
+        id: "tank",
+        minWave: 5,
+        label: "Bulwark Break",
+        target: 2 + Math.floor(wave * 0.25),
+        reward: { score: 170 + wave * 28, xp: 30 + wave * 6, shield: 15, rerolls: 0 },
+      },
+      {
+        id: "sniper",
+        minWave: 4,
+        label: "Counter-Sniper",
+        target: 2 + Math.floor(wave * 0.34),
+        reward: { score: 145 + wave * 25, xp: 26 + wave * 5, shield: 12, rerolls: 0 },
+      },
+      {
+        id: "kamikaze",
+        minWave: 6,
+        label: "Interceptor Sweep",
+        target: 3 + Math.floor(wave * 0.45),
+        reward: { score: 150 + wave * 22, xp: 24 + wave * 5, shield: 8, rerolls: 1 },
+      },
+      {
+        id: "summoner",
+        minWave: 8,
+        label: "Silence The Summoners",
+        target: 2 + Math.floor(wave * 0.3),
+        reward: { score: 200 + wave * 26, xp: 34 + wave * 6, shield: 14, rerolls: 1 },
+      },
+      {
+        id: "elite",
+        minWave: 7,
+        label: "Elite Purge",
+        target: 2 + Math.floor(wave * 0.3),
+        reward: { score: 220 + wave * 30, xp: 36 + wave * 6, shield: 18, rerolls: 1 },
+      },
+    ];
+    const pool = defs.filter((d) => wave >= d.minWave);
+    if (!pool.length) return null;
+    const picked = pool[Math.floor(rng.range(0, pool.length))];
+    return {
+      id: picked.id,
+      label: picked.label,
+      target: picked.target,
+      progress: 0,
+      complete: false,
+      reward: picked.reward,
+    };
+  }
+
+  function applyBountyReward() {
+    const b = state.bounty;
+    if (!b || b.complete) return;
+    b.complete = true;
+    state.score += b.reward.score;
+    player.xp += b.reward.xp;
+    player.shield += b.reward.shield;
+    player.rerolls += b.reward.rerolls;
+    state.flash = Math.max(state.flash, 0.2);
+    pushEvent(`Bounty complete: +${b.reward.score} score, +${b.reward.xp} XP.`);
+  }
+
   function applyMissionReward() {
     const m = state.mission;
     if (!m || m.complete) return;
@@ -1344,7 +1470,9 @@
     maybeSetEndgameMutator();
     state.waveModifier = getModifierForWave(state.wave);
     state.mission = createMissionForWave(state.wave);
+    state.bounty = createBountyForWave(state.wave);
     pushEvent(`Wave ${state.wave} started: ${state.waveModifier.name} | ${biome.label}.`);
+    if (state.bounty) pushEvent(`Bounty: ${state.bounty.label} (${state.bounty.target}).`);
     if (state.wave % 2 === 0) {
       addEnemy("mini");
       pushEvent("Mini-boss breach detected.");
@@ -1459,6 +1587,9 @@
     state.overclock = 0;
     state.freeze = 0;
     state.danger = 0;
+    state.heat = 0;
+    state.heatTier = 0;
+    state.bounty = null;
     state.waveSkipCd = 0;
     state.saveTimer = 0;
     player.x = WIDTH * 0.5;
@@ -1641,6 +1772,7 @@
     const musicDown = { x: WIDTH * 0.63, y: HEIGHT * 0.742, w: WIDTH * 0.11, h: 30 };
     const musicUp = { x: WIDTH * 0.76, y: HEIGHT * 0.742, w: WIDTH * 0.11, h: 30 };
     const muteBtn = { x: WIDTH * 0.63, y: HEIGHT * 0.779, w: WIDTH * 0.24, h: 30 };
+    const codexToggle = { x: WIDTH * 0.12, y: HEIGHT * 0.78, w: WIDTH * 0.2, h: 52 };
     return {
       start,
       cont,
@@ -1669,6 +1801,7 @@
       musicDown,
       musicUp,
       muteBtn,
+      codexToggle,
     };
   }
 
@@ -1733,6 +1866,7 @@
       else return false;
     } else {
       if (pointInRect(pt, btn.back)) state.menuScreen = "home";
+      else if (pointInRect(pt, btn.codexToggle)) state.codexTab = state.codexTab === "synergy" ? "mastery" : "synergy";
       else return false;
     }
     return true;
@@ -1847,6 +1981,9 @@
     if (state.mode === "menu" && (k === "enter" || k === " ")) resetGame();
     if (state.mode === "menu" && k === "y") toggleRunMode();
     if (state.mode === "menu" && k === "k") state.menuScreen = "codex";
+    if (state.mode === "menu" && state.menuScreen === "codex" && k === "m") {
+      state.codexTab = state.codexTab === "synergy" ? "mastery" : "synergy";
+    }
     if (state.mode === "menu" && k === "n") cycleClass();
     if (state.mode === "menu" && state.menuScreen === "home" && k === "c") continueSavedRun();
     if (state.mode === "menu" && k === "v") setCustomSeedFromPrompt();
@@ -2061,9 +2198,10 @@
     state.waveClock += dt;
     const modifier = state.waveModifier || waveModifiers[0];
     const lateRamp = state.wave >= 8 ? 1 + (state.wave - 7) * 0.055 : 1;
-    const pacing = Math.max(0.2, (1.3 - state.wave * 0.06) / (modifier.spawnMul * state.runMods.spawnMul * lateRamp));
+    const heatPressure = 1 + state.heat * 0.006;
+    const pacing = Math.max(0.18, (1.3 - state.wave * 0.06) / (modifier.spawnMul * state.runMods.spawnMul * lateRamp * heatPressure));
     const quality = getQualitySettings();
-    const enemyCap = Math.max(8, Math.floor(quality.enemyCap * state.perf.adaptiveEnemyCapMul * (state.wave >= 10 ? 1.22 : 1)));
+    const enemyCap = Math.max(8, Math.floor(quality.enemyCap * state.perf.adaptiveEnemyCapMul * (state.wave >= 10 ? 1.22 : 1) * (1 + state.heat * 0.003)));
     state.danger += dt;
     if (state.danger >= pacing && state.enemies.length < enemyCap) {
       state.danger = 0;
@@ -2076,6 +2214,7 @@
       if (state.wave >= 6 && rng.next() < 0.33) addEnemy("kamikaze");
       if (state.wave >= 8 && rng.next() < 0.25) addEnemy("summoner");
       if (state.wave >= 5 && rng.next() < 0.28) addEnemy("tank");
+      if (state.heat >= 70 && state.wave >= 7 && rng.next() < 0.18) addEnemy("kamikaze");
     }
     if (state.waveClock >= state.waveLength) {
       state.wave += 1;
@@ -2141,8 +2280,10 @@
     if (player.fireCd > 0 || state.mode !== "playing") return;
     const w = weaponDefs[state.selectedWeapon];
     if (!w) return;
+    const masteryTier = getWeaponMasteryTier(state.selectedWeapon);
     const dir = getAimDirection();
-    const shots = w.shots + player.multishot;
+    const scatterBonus = state.selectedWeapon === "scatter" && masteryTier >= 2 ? 1 : 0;
+    const shots = w.shots + player.multishot + scatterBonus;
     const fireRate = w.cooldown / (player.fireRateMult * (state.overclock > 0 ? 1.45 : 1));
     player.fireCd = fireRate;
     playSfx(state.selectedWeapon === "rail" ? 280 : state.selectedWeapon === "scatter" ? 240 : 330, 0.03, "triangle", 0.08);
@@ -2159,8 +2300,9 @@
         vy,
         r: (w.name === "Scatter" ? 4 : 5) * player.projectileSizeMult,
         life: 1.15 * player.rangeMult,
-        damage: player.damage * w.damageMult * state.runMods.playerDamageMul,
+        damage: player.damage * w.damageMult * state.runMods.playerDamageMul * getMasteryDamageMul(state.selectedWeapon),
         color: w.color,
+        weapon: state.selectedWeapon,
         pierce: (w.pierce || 1) + player.bonusPierce,
       });
     }
@@ -2195,6 +2337,7 @@
     }
     if (remaining > 0) player.hp -= remaining;
     playSfx(170, 0.06, "sawtooth", 0.18);
+    state.heat = Math.max(0, state.heat - 7);
     state.cameraShake = Math.min(12, state.cameraShake + 4);
     state.flash = Math.min(0.26, state.flash + 0.14);
     if (player.hp <= 0) {
@@ -2225,6 +2368,8 @@
   function rewardKill(enemy) {
     const modifier = state.waveModifier || waveModifiers[0];
     state.kills += 1;
+    const heatGain = enemy.boss ? 22 : enemy.mini ? 14 : enemy.elite ? 7 : 3.6;
+    state.heat = Math.min(100, state.heat + heatGain);
     state.streak += 1;
     state.streakTimer = 2.3;
     const comboBoost = 1 + Math.min(2.4, state.combo * 0.07);
@@ -2233,6 +2378,17 @@
     state.score += scoreGain;
     player.scrap += Math.ceil(enemy.value * 0.35 * player.salvageMult);
     player.xp += enemy.value * 0.55;
+    const weaponUsed = state.selectedWeapon;
+    if (state.meta?.masteryKills?.[weaponUsed] !== undefined) {
+      const beforeTier = getWeaponMasteryTier(weaponUsed);
+      const masteryGain = enemy.boss ? 3 : enemy.mini ? 2 : 1;
+      state.meta.masteryKills[weaponUsed] += masteryGain;
+      const afterTier = getWeaponMasteryTier(weaponUsed);
+      if (afterTier > beforeTier) {
+        pushEvent(`${weaponUsed.toUpperCase()} mastery tier ${afterTier} unlocked.`);
+        saveMeta();
+      }
+    }
     state.combo += 1;
     state.comboTimer = player.comboDuration;
     spawnParticles(enemy.x, enemy.y, enemy.color, 14, 190);
@@ -2240,6 +2396,13 @@
     if (state.mission && !state.mission.complete && state.mission.id === "eliminate") {
       state.mission.progress = Math.min(state.mission.target, state.mission.progress + 1);
       if (state.mission.progress >= state.mission.target) applyMissionReward();
+    }
+    if (state.bounty && !state.bounty.complete) {
+      const matchesBounty = state.bounty.id === "elite" ? Boolean(enemy.elite) : state.bounty.id === enemy.kind;
+      if (matchesBounty) {
+        state.bounty.progress = Math.min(state.bounty.target, state.bounty.progress + 1);
+        if (state.bounty.progress >= state.bounty.target) applyBountyReward();
+      }
     }
     if (enemy.boss) {
       player.bombs += 1;
@@ -2554,9 +2717,12 @@
         const e = state.enemies[j];
         const d = Math.hypot(p.x - e.x, p.y - e.y);
         if (d < p.r + e.r) {
-          const crit = rng.next() < player.critChance;
+          const railTier = p.weapon === "rail" ? getWeaponMasteryTier("rail") : 0;
+          const critChance = Math.min(0.8, player.critChance + (railTier >= 1 ? 0.03 : 0));
+          const critMult = player.critMult + (railTier >= 2 ? 0.25 : 0);
+          const crit = rng.next() < critChance;
           const bossMul = e.boss ? player.bossDamageMult : 1;
-          const dmg = p.damage * (crit ? player.critMult : 1) * bossMul;
+          const dmg = p.damage * (crit ? critMult : 1) * bossMul;
           let dealt = dmg;
           if ((e.shield || 0) > 0) {
             const absorb = Math.min(e.shield, dealt);
@@ -2929,10 +3095,16 @@
     if (gameplayActive) {
       state.overclock = Math.max(0, state.overclock - dt);
       state.freeze = Math.max(0, state.freeze - dt);
+      state.heat = Math.max(0, state.heat - dt * 2.8);
       state.waveSkipCd = Math.max(0, state.waveSkipCd - dt);
       if (player.shieldRegen > 0) player.shield = Math.min(160, player.shield + player.shieldRegen * dt);
       state.streakTimer = Math.max(0, state.streakTimer - dt);
       if (state.streakTimer <= 0) state.streak = 0;
+      const nextTier = state.heat >= 75 ? 3 : state.heat >= 50 ? 2 : state.heat >= 25 ? 1 : 0;
+      if (nextTier !== state.heatTier) {
+        if (nextTier > state.heatTier) pushEvent(`Threat level ${nextTier} rising.`);
+        state.heatTier = nextTier;
+      }
       if (state.mission && !state.mission.complete && state.mission.id === "survive") {
         state.mission.progress = Math.min(state.mission.target, state.mission.progress + dt);
         if (state.mission.progress >= state.mission.target) applyMissionReward();
@@ -3221,7 +3393,7 @@
     ctx.fillText(`Warp ${(state.waveSkipCd <= 0 ? "Ready" : state.waveSkipCd.toFixed(1) + "s")} (${displayKey(state.settings.warpKey)})`, WIDTH - 306, 139);
 
     ctx.fillStyle = "rgba(8, 12, 24, 0.7)";
-    ctx.fillRect(16, 144, 350, compact ? 64 : 84);
+    ctx.fillRect(16, 144, 350, compact ? 86 : 112);
     ctx.fillStyle = (state.waveModifier && state.waveModifier.color) || "#d6e1ff";
     ctx.fillText(`Modifier: ${(state.waveModifier && state.waveModifier.name) || "Standard"}`, 30, 172);
     if (state.mission) {
@@ -3230,6 +3402,12 @@
       ctx.fillStyle = state.mission.complete ? "#9fffc5" : "#e6f1ff";
       ctx.fillText(`${state.mission.label}`, 30, 198);
       if (!compact) ctx.fillText(`Progress ${prog} / ${target}`, 30, 222);
+    }
+    if (state.bounty) {
+      const bp = Math.floor(state.bounty.progress);
+      const bt = Math.floor(state.bounty.target);
+      ctx.fillStyle = state.bounty.complete ? "#aef7c4" : "#ffdca8";
+      ctx.fillText(`Bounty: ${state.bounty.label} ${bp}/${bt}`, 30, compact ? 222 : 246);
     }
     if (state.activeEvent) {
       ctx.fillStyle = "#ffd6ab";
@@ -3243,6 +3421,8 @@
       ctx.fillStyle = "#ffcc9c";
       ctx.fillText(`Endgame: ${state.endgameMutator.label}`, 390, 214);
     }
+    ctx.fillStyle = state.heat >= 70 ? "#ffb08a" : state.heat >= 40 ? "#ffd59e" : "#b8d2ff";
+    ctx.fillText(`Threat ${Math.round(state.heat)}%`, 390, 241);
     if (state.streak > 0) {
       ctx.fillStyle = "#ffe9a8";
       ctx.fillText(`Streak x${state.streak}`, 390, 195);
@@ -3324,7 +3504,9 @@
         ctx.fillText(`Daily ${state.challenge.code} | ${state.challenge.labels.join(" / ")}`, WIDTH * 0.13, HEIGHT * 0.63);
       }
       ctx.fillText(
-        `Shards ${state.meta?.shards || 0} | Best ${state.meta?.bestScore || 0} pts wave ${state.meta?.bestWave || 0}`,
+        `Shards ${state.meta?.shards || 0} | Best ${state.meta?.bestScore || 0} pts wave ${state.meta?.bestWave || 0} | M P${getWeaponMasteryTier(
+          "pulse"
+        )}/S${getWeaponMasteryTier("scatter")}/R${getWeaponMasteryTier("rail")}`,
         WIDTH * 0.13,
         HEIGHT * 0.655
       );
@@ -3434,26 +3616,61 @@
       ctx.fillText("MUS+", btn.musicUp.x + 30, btn.musicUp.y + 20);
       ctx.fillText("Mute", btn.muteBtn.x + 95, btn.muteBtn.y + 20);
     } else {
-      const discovered = Object.keys(state.synergies);
       ctx.fillStyle = "#d9e8ff";
       ctx.font = "24px Trebuchet MS";
-      ctx.fillText(`Synergies discovered ${discovered.length} / ${synergyDefs.length}`, WIDTH * 0.13, HEIGHT * 0.38);
-      ctx.font = "20px Trebuchet MS";
-      let row = 0;
-      for (const s of synergyDefs) {
-        const unlocked = Boolean(state.synergies[s.id]);
-        const needs = Object.entries(s.needs)
-          .map(([k, v]) => {
-            const up = upgrades.find((u) => u.id === k);
-            return `${up ? up.label : k} x${v}`;
-          })
-          .join(", ");
-        ctx.fillStyle = unlocked ? "#a8ffd2" : "#e3edff";
-        ctx.fillText(`${unlocked ? "UNLOCKED" : "LOCKED"} - ${s.label}`, WIDTH * 0.13, HEIGHT * 0.44 + row * 42);
-        ctx.fillStyle = "#a6bbdd";
-        ctx.fillText(`Needs: ${needs}`, WIDTH * 0.4, HEIGHT * 0.44 + row * 42);
-        row += 1;
-        if (row >= 6) break;
+      ctx.fillText(`Codex tab: ${state.codexTab.toUpperCase()} (M to toggle)`, WIDTH * 0.13, HEIGHT * 0.36);
+      ctx.fillStyle = "rgba(142, 199, 255, 0.95)";
+      ctx.fillRect(btn.codexToggle.x, btn.codexToggle.y, btn.codexToggle.w, btn.codexToggle.h);
+      ctx.fillStyle = "#122947";
+      ctx.font = "22px Trebuchet MS";
+      ctx.fillText(`Open ${state.codexTab === "synergy" ? "Mastery" : "Synergy"} Tab`, btn.codexToggle.x + 18, btn.codexToggle.y + 34);
+
+      if (state.codexTab === "synergy") {
+        const discovered = Object.keys(state.synergies);
+        ctx.fillStyle = "#d9e8ff";
+        ctx.font = "24px Trebuchet MS";
+        ctx.fillText(`Synergies discovered ${discovered.length} / ${synergyDefs.length}`, WIDTH * 0.13, HEIGHT * 0.42);
+        ctx.font = "20px Trebuchet MS";
+        let row = 0;
+        for (const s of synergyDefs) {
+          const unlocked = Boolean(state.synergies[s.id]);
+          const needs = Object.entries(s.needs)
+            .map(([k, v]) => {
+              const up = upgrades.find((u) => u.id === k);
+              return `${up ? up.label : k} x${v}`;
+            })
+            .join(", ");
+          ctx.fillStyle = unlocked ? "#a8ffd2" : "#e3edff";
+          ctx.fillText(`${unlocked ? "UNLOCKED" : "LOCKED"} - ${s.label}`, WIDTH * 0.13, HEIGHT * 0.48 + row * 40);
+          ctx.fillStyle = "#a6bbdd";
+          ctx.fillText(`Needs: ${needs}`, WIDTH * 0.4, HEIGHT * 0.48 + row * 40);
+          row += 1;
+          if (row >= 6) break;
+        }
+      } else {
+        ctx.fillStyle = "#dff0ff";
+        ctx.font = "24px Trebuchet MS";
+        ctx.fillText("Weapon Mastery (persistent across runs)", WIDTH * 0.13, HEIGHT * 0.42);
+        ctx.font = "18px Trebuchet MS";
+        const weaponOrder = ["pulse", "scatter", "rail"];
+        const starts = [HEIGHT * 0.48, HEIGHT * 0.585, HEIGHT * 0.69];
+        for (let i = 0; i < weaponOrder.length; i++) {
+          const id = weaponOrder[i];
+          const kills = Number(state.meta?.masteryKills?.[id] || 0);
+          const tier = getWeaponMasteryTier(id);
+          const marks = masteryThresholds[id] || [];
+          const name = weaponDefs[id]?.name || id;
+          const y = starts[i];
+          ctx.fillStyle = "#f2f7ff";
+          ctx.fillText(`${name}: ${kills} kills | Tier ${tier}/3`, WIDTH * 0.13, y);
+          ctx.fillStyle = "#aecdff";
+          ctx.fillText(`Thresholds: T1 ${marks[0]}, T2 ${marks[1]}, T3 ${marks[2]}`, WIDTH * 0.39, y);
+          const lines = masteryBonusLines(id);
+          for (let l = 0; l < lines.length; l++) {
+            ctx.fillStyle = lines[l].includes("(active)") ? "#9ff5cd" : "#b9cee9";
+            ctx.fillText(`- ${lines[l]}`, WIDTH * 0.16, y + 22 + l * 18);
+          }
+        }
       }
       ctx.fillStyle = "rgba(143, 190, 255, 0.95)";
       ctx.fillRect(btn.back.x, btn.back.y, btn.back.w, btn.back.h);
@@ -3677,6 +3894,7 @@
       runSeed: state.runSeed,
       shipClass: state.selectedClass,
       wave: state.wave,
+      threatHeat: Number(state.heat.toFixed(1)),
       waveProgressSeconds: Number(state.waveClock.toFixed(2)),
       waveModifier: state.waveModifier ? state.waveModifier.id : "standard",
       coopJoined: state.coopJoined,
@@ -3705,6 +3923,7 @@
       performance: {
         avgFps: Number(state.perf.avgFps.toFixed(1)),
         adaptiveEnemyCapMul: Number(state.perf.adaptiveEnemyCapMul.toFixed(2)),
+        threatHeat: Number(state.heat.toFixed(1)),
       },
       runSaveAvailable: state.runSaveAvailable,
       player: {
@@ -3769,6 +3988,15 @@
             complete: state.mission.complete,
           }
         : null,
+      bounty: state.bounty
+        ? {
+            id: state.bounty.id,
+            label: state.bounty.label,
+            progress: Number(state.bounty.progress.toFixed(1)),
+            target: state.bounty.target,
+            complete: state.bounty.complete,
+          }
+        : null,
       activeEvent: state.activeEvent
         ? {
             id: state.activeEvent.id,
@@ -3787,6 +4015,7 @@
         dailyBestToday: state.meta?.dailyBest?.[state.challenge?.code || ""] || 0,
         dailyStreak: state.meta?.dailyStreak || 0,
         weaponBest: state.meta?.weaponBest || { pulse: 0, scatter: 0, rail: 0 },
+        masteryKills: state.meta?.masteryKills || { pulse: 0, scatter: 0, rail: 0 },
         perks: state.meta?.perks || { hull: 0, cannons: 0, thrusters: 0 },
       },
       score: Number(state.score.toFixed(1)),

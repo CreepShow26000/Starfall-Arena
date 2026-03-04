@@ -262,3 +262,71 @@ Original prompt: Create a really fun really really high quality game i can play 
   - `node --check game.js` passed after each major patch batch.
   - Playwright menu and sustained gameplay loops rerun successfully.
   - No console/page error artifacts in latest output checks.
+- Phase 2 upgrade pass completed (replayability + pacing):
+  - Added dynamic threat director system:
+    - New run state `heat`/`heatTier` tracks momentum pressure from kill tempo.
+    - Heat now increases on kills (more on elites/mini/boss), decays over time, and drops when the player takes damage.
+    - Spawn pacing and enemy-cap scaling now dynamically intensify with heat.
+    - HUD now shows `Threat %` and event text on rising threat tiers.
+  - Added wave bounty contract system:
+    - Each eligible wave can assign a bounty target (e.g. sniper/tank/kamikaze/summoner/elite).
+    - Bounty progress updates from matching kills and grants rewards on completion (score/xp/shield/rerolls).
+    - Bounty state is visible in HUD and included in text-state output.
+  - Added persistent weapon mastery progression:
+    - Meta now tracks `masteryKills` per weapon (`pulse`, `scatter`, `rail`) via localStorage.
+    - Weapon mastery tiers grant practical combat bonuses:
+      - All weapons: per-tier damage scaling.
+      - Scatter: bonus pellet at higher mastery tier.
+      - Rail: crit chance/crit multiplier bonuses at higher tiers.
+    - Mastery tier unlock event callouts added.
+    - Home menu now shows compact mastery summary (P/S/R tiers) inline with shard stats.
+- Persistence/network integration updates:
+  - Run save payload now includes `heat`, `heatTier`, and `bounty`.
+  - Saved run load restores these new fields.
+  - Host/guest snapshot payload now includes these fields so online mirror state stays coherent.
+  - `render_game_to_text` expanded with:
+    - `threatHeat`
+    - `bounty`
+    - `meta.masteryKills`
+    - `performance.threatHeat`
+- UI/layout follow-up:
+  - Fixed a home menu overlap regression where a separate mastery line collided with button row.
+  - Replaced extra mastery row with inline compact mastery text in the existing shard/best line.
+  - Increased mission panel height to fit mission + bounty details cleanly.
+- Validation:
+  - `node --check game.js` passed after changes.
+  - Playwright regression runs completed against local server:
+    - `actions-menu.json`
+    - `actions-long.json`
+    - additional inline action bursts for menu visual regression checks.
+  - Visual checks:
+    - Confirmed menu no-overlap for mastery summary.
+    - Confirmed HUD displays threat meter during gameplay.
+  - Latest `render_game_to_text` includes new bounty/mastery/threat fields.
+- TODO / next suggestions:
+  - Add explicit menu codex page for mastery thresholds/bonuses so players can see exact unlock targets.
+  - Add a small bounty icon/banner near wave transitions for stronger readability.
+  - Add an optional “hardcore threat lock” mutator that prevents heat from decaying for challenge runs.
+- Mastery Codex feature completed:
+  - Added codex tab system on `menuScreen === codex` with two views:
+    - `SYNERGY` (existing synergy list)
+    - `MASTERY` (new detailed mastery panel)
+  - Added new menu state `codexTab` with toggle paths:
+    - Keyboard: `M` while on codex screen
+    - Clickable toggle button: `Open Mastery Tab` / `Open Synergy Tab`
+  - Mastery Codex now shows exact weapon-by-weapon data:
+    - Kill count per weapon (`pulse`, `scatter`, `rail`)
+    - Current tier (`0-3`)
+    - Exact tier thresholds (T1/T2/T3)
+    - Exact bonus lines, including active-state markers:
+      - global mastery damage bonus per tier
+      - Scatter Tier 2 pellet bonus
+      - Rail Tier 1 crit chance and Tier 2 crit multiplier bonuses
+      - Pulse DPS scaling note
+- Validation:
+  - `node --check game.js` passed.
+  - Playwright visual interaction checks passed for codex:
+    - Open codex via click
+    - Toggle to mastery tab via click
+    - Toggle back to synergy tab via click
+  - Screenshots confirmed both codex tabs render with expected content and controls.
