@@ -410,3 +410,79 @@ Original prompt: Create a really fun really really high quality game i can play 
 - Validation:
   - `node --check game.js` passed after edits.
   - Playwright menu/gameplay regressions rerun; screenshots and state output remained stable.
+- Big content update pass completed (multi-feature expansion):
+  - Added new run mode: `gauntlet` (harder/faster pacing and boosted rewards profile).
+  - Added persistent achievements system:
+    - `First Blood`, `Boss Breaker`, `Relic Hunter`, `Wave 10`, `Gauntlet Runner`.
+    - Achievements now persist in meta and are surfaced in game-over and text-state output.
+  - Expanded codex to support 3 tabs (`synergy`, `mastery`, `achievements`) with cycling logic and dynamic button labeling.
+  - Added Black Market in-run shop mode:
+    - Opens on wave milestones (every 4 waves when not intercepted by relic state).
+    - 3 purchasable offers using scrap currency.
+    - Shop reroll + skip flow with keyboard/click controls.
+  - Added ultimate system:
+    - New player ultimate meter (`Ultimate Z`) charging from kills.
+    - `Starstorm` activation with timed pulses, bonus firing cadence, and visual/audio feedback.
+  - Added two new enemy types:
+    - `turret` (stationary burst shooter)
+    - `phaser` (periodic short-range teleport threat)
+  - Added threat-director hazard pipeline:
+    - Heat-gated hazard events (shrapnel bursts, minefields, reinforcement warps).
+    - Hazard entities now update/draw and can damage player when overlapped.
+  - Boss combat deepening:
+    - Boss weak-point arc rendering + phase transitions retained and tuned.
+    - Boss cadence scales by phase.
+  - Weapon evolution expansion (tier-3 mastery driven) retained and integrated with new systems:
+    - Pulse EVO side bursts
+    - Scatter EVO spread boost
+    - Rail EVO splash on impact
+  - Replay/share code upgraded:
+    - Challenge code format `SFCH|seed|class|mode` now supports gauntlet parsing.
+  - Co-op follow-up polish:
+    - Home menu now shows class effects inline.
+    - Added stronger P2 agency actions (`Y` burst, `H` support pulse), mode-aware tuning, and cooldown fields in text output.
+- Integration updates:
+  - Save/load + host snapshot payloads extended for new runtime fields (shop, hazards, ultimate/starstorm state, etc.).
+  - `render_game_to_text` expanded with new shop/ultimate/achievement/unlock data.
+- Validation:
+  - `node --check game.js` passed repeatedly after patches.
+  - Playwright regression passes completed (menu + gameplay + custom control bursts).
+  - Visual checks performed on latest menu/codex/gameplay screenshots.
+  - No console/page error artifacts found in latest output checks.
+- Nightmare + balance/content follow-up pass completed:
+  - Added new run mode: `nightmare`.
+    - Mode cycle now includes `standard -> daily -> gauntlet -> nightmare`.
+    - Challenge code share/load now supports nightmare mode (`SFCH|seed|class|nightmare`).
+    - Nightmare start tuning:
+      - shorter waves (`waveLength = 18`)
+      - stronger enemy scaling (`enemySpeed`, `enemyHP`, `spawn` multipliers)
+      - higher score multiplier
+      - slight player HP penalty with a small damage bump
+  - Expanded achievements:
+    - Added `Nightmare Survivor` achievement (reach wave 6 in nightmare mode).
+  - Black Market/shop improvements:
+    - Repriced baseline offers for tougher modes (gauntlet/nightmare cost multipliers).
+    - Added progression-aware conditional offers:
+      - unlock Scatter (if still locked)
+      - unlock Rail (if still locked)
+      - guaranteed drone-oriented offer if no drones
+      - late-wave overdrive offer
+    - Shop cadence now increases in nightmare (`every 3 waves` instead of 4).
+  - Difficulty and pacing rebalance:
+    - Increased spawn pressure/cap scaling in gauntlet/nightmare.
+    - Nightmare can spawn extra phaser/turret pressure in mid waves.
+    - Ultimate charge gain from kills is reduced in harder modes.
+    - Ultimate (Starstorm) is mode-balanced:
+      - lower pulse damage in harder modes
+      - longer cooldown and shorter duration in gauntlet/nightmare
+  - Progression consistency for co-op build variety:
+    - Level-up offering can now force a wing-tree offense option once in early-mid game if wing tree is still untouched.
+- Validation:
+  - `node --check game.js` passed.
+  - Playwright smoke/menu runs completed and screenshots/states generated in:
+    - `output/web-game-menu-pass2`
+    - `output/web-game-play-pass2`
+  - Visual check confirms menu layout remains non-overlapping and centered after this pass.
+  - Existing gameplay screenshot sanity check still valid (`output/web-game/shot-5.png`) with stable HUD/render.
+- Notes:
+  - The local Playwright helper's button map only supports a narrow key subset in action payloads, so direct scripted toggle of `Y` run-mode cycle wasn't fully exercised in automation; feature verified by code-path + static checks.

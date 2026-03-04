@@ -118,6 +118,10 @@
     directorCd: 6,
     wingmanMode: "balanced",
     evoPulseCounter: 0,
+    starstorm: 0,
+    starstormTick: 0,
+    shopOffers: [],
+    shopRefreshes: 0,
     waveSkipCd: 0,
     pointer: { x: WIDTH * 0.5, y: HEIGHT * 0.5, inside: false },
     coopJoined: true,
@@ -366,6 +370,8 @@
     wingTreeOffense: 0,
     wingTreeDefense: 0,
     wingTreeUtility: 0,
+    ultimateCharge: 0,
+    ultimateCd: 0,
     rerolls: 1,
     banishes: 1,
     contactDamageCd: 0,
@@ -402,6 +408,7 @@
       masteryKills: { pulse: 0, scatter: 0, rail: 0 },
       totalShardsEarned: 0,
       unlocks: { vanguard: false, engineer: false, phantom: false, rareRelics: false, trail: false },
+      achievements: {},
       perks: { hull: 0, cannons: 0, thrusters: 0 },
     };
   }
@@ -436,6 +443,7 @@
           rareRelics: Boolean(parsed.unlocks?.rareRelics || false),
           trail: Boolean(parsed.unlocks?.trail || false),
         },
+        achievements: parsed.achievements && typeof parsed.achievements === "object" ? parsed.achievements : {},
         perks: {
           hull: Number(parsed.perks?.hull || 0),
           cannons: Number(parsed.perks?.cannons || 0),
@@ -505,7 +513,7 @@
   function createRunSavePayload() {
     return {
       savedAt: Date.now(),
-      mode: "playing",
+      mode: state.mode,
       runMode: state.runMode,
       runSeed: state.runSeed,
       selectedClass: state.selectedClass,
@@ -551,6 +559,10 @@
       directorCd: state.directorCd,
       wingmanMode: state.wingmanMode,
       evoPulseCounter: state.evoPulseCounter,
+      starstorm: state.starstorm,
+      starstormTick: state.starstormTick,
+      shopOffers: state.shopOffers,
+      shopRefreshes: state.shopRefreshes,
       waveSkipCd: state.waveSkipCd,
       coopJoined: state.coopJoined,
       player: { ...player },
@@ -559,7 +571,7 @@
   }
 
   function saveRun() {
-    if (state.mode !== "playing" && state.mode !== "paused" && state.mode !== "levelup") return;
+    if (state.mode !== "playing" && state.mode !== "paused" && state.mode !== "levelup" && state.mode !== "shop" && state.mode !== "relic") return;
     if (!player.alive || state.net.mode !== "offline") return;
     try {
       localStorage.setItem(RUN_SAVE_KEY, JSON.stringify(createRunSavePayload()));
@@ -573,7 +585,7 @@
       if (!raw) return false;
       const s = JSON.parse(raw);
       if (!s || typeof s !== "object") return false;
-      state.mode = "playing";
+      state.mode = s.mode || "playing";
       state.runMode = s.runMode || "standard";
       state.runSeed = s.runSeed || "";
       state.selectedClass = s.selectedClass || "striker";
@@ -636,6 +648,10 @@
       state.directorCd = Number(s.directorCd || 6);
       state.wingmanMode = ["balanced", "aggressive", "support"].includes(s.wingmanMode) ? s.wingmanMode : "balanced";
       state.evoPulseCounter = Number(s.evoPulseCounter || 0);
+      state.starstorm = Number(s.starstorm || 0);
+      state.starstormTick = Number(s.starstormTick || 0);
+      state.shopOffers = Array.isArray(s.shopOffers) ? s.shopOffers : [];
+      state.shopRefreshes = Number(s.shopRefreshes || 0);
       state.waveSkipCd = Number(s.waveSkipCd || 0);
       state.coopJoined = Boolean(s.coopJoined);
       Object.assign(player, s.player || {});
@@ -714,7 +730,9 @@
   }
 
   function toggleRunMode() {
-    state.runMode = state.runMode === "daily" ? "standard" : "daily";
+    const order = ["standard", "daily", "gauntlet", "nightmare"];
+    const idx = order.indexOf(state.runMode);
+    state.runMode = order[(idx + 1 + order.length) % order.length];
     pushEvent(`Run mode set to ${state.runMode.toUpperCase()}.`);
   }
 
@@ -728,7 +746,16 @@
   }
 
   function encodeChallengeCode() {
-    const mode = state.runMode === "daily" ? "daily" : state.runMode === "seeded" ? "seeded" : "standard";
+    const mode =
+      state.runMode === "daily"
+        ? "daily"
+        : state.runMode === "seeded"
+          ? "seeded"
+          : state.runMode === "gauntlet"
+            ? "gauntlet"
+            : state.runMode === "nightmare"
+              ? "nightmare"
+              : "standard";
     const seed = mode === "daily" ? state.challenge?.code || "DAILY" : state.runSeed || "STANDARD";
     const cls = state.selectedClass || "striker";
     return `SFCH|${seed}|${cls}|${mode}`;
@@ -746,7 +773,7 @@
     const code = seed.trim();
     const parsed = decodeChallengeCode(code);
     if (parsed) {
-      state.runMode = ["daily", "seeded", "standard"].includes(parsed.mode) ? parsed.mode : "standard";
+      state.runMode = ["daily", "seeded", "standard", "gauntlet", "nightmare"].includes(parsed.mode) ? parsed.mode : "standard";
       state.selectedClass = isClassUnlocked(parsed.cls) ? parsed.cls : "striker";
       if (state.runMode === "daily") {
         state.challenge = buildTodayChallenge();
@@ -914,6 +941,25 @@
     }
   }
 
+  const achievementDefs = [
+    { id: "first_blood", label: "First Blood", note: "Get your first kill." },
+    { id: "boss_breaker", label: "Boss Breaker", note: "Defeat a boss." },
+    { id: "relic_hunter", label: "Relic Hunter", note: "Collect 3 relics in one run." },
+    { id: "wave10", label: "Wave 10", note: "Reach wave 10." },
+    { id: "gauntlet_runner", label: "Gauntlet Runner", note: "Reach wave 8 in gauntlet mode." },
+    { id: "nightmare_survivor", label: "Nightmare Survivor", note: "Reach wave 6 in nightmare mode." },
+  ];
+
+  function unlockAchievement(id) {
+    if (!state.meta) return;
+    if (!state.meta.achievements) state.meta.achievements = {};
+    if (state.meta.achievements[id]) return;
+    state.meta.achievements[id] = true;
+    const def = achievementDefs.find((a) => a.id === id);
+    pushEvent(`Achievement: ${def?.label || id}`);
+    saveMeta();
+  }
+
   function cycleWingmanMode() {
     const modes = ["balanced", "aggressive", "support"];
     const idx = modes.indexOf(state.wingmanMode);
@@ -997,6 +1043,7 @@
     state.relics[relic.id] = true;
     relic.apply();
     pushEvent(`Relic acquired: ${relic.label}`);
+    if (Object.keys(state.relics).length >= 3) unlockAchievement("relic_hunter");
     state.relicChoices = [];
     state.mode = "playing";
     playSfx(520, 0.06, "square", 0.35);
@@ -1152,6 +1199,10 @@
       directorCd: state.directorCd,
       wingmanMode: state.wingmanMode,
       evoPulseCounter: state.evoPulseCounter,
+      starstorm: state.starstorm,
+      starstormTick: state.starstormTick,
+      shopOffers: state.shopOffers,
+      shopRefreshes: state.shopRefreshes,
       waveSkipCd: state.waveSkipCd,
       pointer: state.pointer,
       coopJoined: state.coopJoined,
@@ -1190,6 +1241,10 @@
     state.directorCd = snap.directorCd || 6;
     state.wingmanMode = snap.wingmanMode || "balanced";
     state.evoPulseCounter = snap.evoPulseCounter || 0;
+    state.starstorm = snap.starstorm || 0;
+    state.starstormTick = snap.starstormTick || 0;
+    state.shopOffers = Array.isArray(snap.shopOffers) ? snap.shopOffers : [];
+    state.shopRefreshes = snap.shopRefreshes || 0;
     state.waveSkipCd = snap.waveSkipCd || 0;
     state.pointer = snap.pointer || state.pointer;
     state.coopJoined = Boolean(snap.coopJoined);
@@ -1758,6 +1813,111 @@
     pushEvent(`Bounty complete: +${b.reward.score} score, +${b.reward.xp} XP.`);
   }
 
+  function buildShopOfferPool() {
+    const modeCostMul = state.runMode === "nightmare" ? 1.22 : state.runMode === "gauntlet" ? 1.1 : 1;
+    const scale = (cost) => Math.round(cost * modeCostMul);
+    const pool = [
+      { id: "hp_boost", label: "+22 max HP", cost: scale(74), apply: () => ((player.maxHp += 22), (player.hp += 22)) },
+      { id: "damage_amp", label: "+16% damage", cost: scale(95), apply: () => (player.damage *= 1.16) },
+      { id: "firerate_amp", label: "+14% fire rate", cost: scale(95), apply: () => (player.fireRateMult *= 1.14) },
+      { id: "shield_pack", label: "+28 shield", cost: scale(68), apply: () => (player.shield += 28) },
+      { id: "bomb_cache", label: "+2 bombs", cost: scale(78), apply: () => (player.bombs += 2) },
+      { id: "reroll_cache", label: "+2 rerolls", cost: scale(60), apply: () => (player.rerolls += 2) },
+      { id: "banish_cache", label: "+2 banishes", cost: scale(60), apply: () => (player.banishes += 2) },
+      { id: "wing_node", label: "+1 random wing tree", cost: scale(98), apply: () => addRandomWingTreePoint() },
+      { id: "ult_fuel", label: "+40 ultimate charge", cost: scale(88), apply: () => (player.ultimateCharge = Math.min(100, player.ultimateCharge + 40)) },
+    ];
+    if (!state.unlockedWeapons.scatter && state.wave >= 3) {
+      pool.push({
+        id: "unlock_scatter",
+        label: "Unlock Scatter weapon",
+        cost: scale(102),
+        apply: () => ((state.unlockedWeapons.scatter = true), (state.selectedWeapon = "scatter")),
+      });
+    }
+    if (!state.unlockedWeapons.rail && state.wave >= 6) {
+      pool.push({
+        id: "unlock_rail",
+        label: "Unlock Rail weapon",
+        cost: scale(122),
+        apply: () => ((state.unlockedWeapons.rail = true), (state.selectedWeapon = "rail")),
+      });
+    }
+    if (player.droneCount === 0 && state.wave >= 4) {
+      pool.push({
+        id: "drone_core",
+        label: "Deploy 1 drone +15 shield",
+        cost: scale(92),
+        apply: () => ((player.droneCount += 1), (player.shield += 15)),
+      });
+    }
+    if (state.wave >= 9) {
+      pool.push({
+        id: "overdrive_core",
+        label: "Overdrive: +22% damage, +10% fire rate",
+        cost: scale(132),
+        apply: () => ((player.damage *= 1.22), (player.fireRateMult *= 1.1)),
+      });
+    }
+    return pool;
+  }
+
+  function addRandomWingTreePoint() {
+    const ids = ["wingTreeOffense", "wingTreeDefense", "wingTreeUtility"].filter((k) => player[k] < 3);
+    if (!ids.length) return;
+    const pick = ids[Math.floor(rng.range(0, ids.length))];
+    player[pick] += 1;
+  }
+
+  function rollShopOffers() {
+    const pool = buildShopOfferPool();
+    const picks = [];
+    while (picks.length < 3 && pool.length) {
+      const idx = Math.floor(rng.range(0, pool.length));
+      picks.push(pool[idx]);
+      pool.splice(idx, 1);
+    }
+    state.shopOffers = picks;
+  }
+
+  function tryOpenShopChoice() {
+    const interval = state.runMode === "nightmare" ? 3 : 4;
+    if (state.wave > 0 && state.wave % interval === 0 && state.mode === "playing") {
+      state.mode = "shop";
+      state.shopRefreshes = Math.max(0, state.shopRefreshes);
+      rollShopOffers();
+      pushEvent("Black Market open.");
+    }
+  }
+
+  function pickShopOffer(i) {
+    if (state.mode !== "shop") return;
+    const offer = state.shopOffers[i];
+    if (!offer) return;
+    if (player.scrap < offer.cost) {
+      pushEvent("Not enough scrap.");
+      return;
+    }
+    player.scrap -= offer.cost;
+    offer.apply();
+    pushEvent(`Purchased: ${offer.label}`);
+    state.shopOffers = [];
+    state.mode = "playing";
+  }
+
+  function rerollShopOffers() {
+    if (state.mode !== "shop") return;
+    if (state.shopRefreshes <= 0) return;
+    state.shopRefreshes -= 1;
+    rollShopOffers();
+  }
+
+  function skipShop() {
+    if (state.mode !== "shop") return;
+    state.shopOffers = [];
+    state.mode = "playing";
+  }
+
   function applyMissionReward() {
     const m = state.mission;
     if (!m || m.complete) return;
@@ -1778,6 +1938,8 @@
     state.waveModifier = getModifierForWave(state.wave);
     state.mission = createMissionForWave(state.wave);
     state.bounty = createBountyForWave(state.wave);
+    if (state.wave >= 10) unlockAchievement("wave10");
+    if (state.runMode === "nightmare" && state.wave >= 6) unlockAchievement("nightmare_survivor");
     pushEvent(`Wave ${state.wave} started: ${state.waveModifier.name} | ${biome.label}.`);
     if (state.bounty) pushEvent(`Bounty: ${state.bounty.label} (${state.bounty.target}).`);
     if (state.wave % 2 === 0) {
@@ -1850,6 +2012,7 @@
         pushEvent(`Daily reward +${dailyBonus} shards (streak ${state.meta.dailyStreak}).`);
       }
     }
+    if (state.runMode === "gauntlet" && state.wave >= 8) unlockAchievement("gauntlet_runner");
     refreshMetaUnlocks(true);
     saveMeta();
     pushEvent(`Recovered ${shardsEarned} star shards.`);
@@ -1903,6 +2066,10 @@
     state.directorCd = 6;
     state.wingmanMode = "balanced";
     state.evoPulseCounter = 0;
+    state.starstorm = 0;
+    state.starstormTick = 0;
+    state.shopOffers = [];
+    state.shopRefreshes = 1;
     state.waveSkipCd = 0;
     state.saveTimer = 0;
     player.x = WIDTH * 0.5;
@@ -1957,6 +2124,8 @@
     player.wingTreeOffense = 0;
     player.wingTreeDefense = 0;
     player.wingTreeUtility = 0;
+    player.ultimateCharge = 0;
+    player.ultimateCd = 0;
     player.rerolls = 1;
     player.banishes = 1;
     player.contactDamageCd = 0;
@@ -1992,6 +2161,25 @@
     if (state.runMode === "daily" && state.challenge?.mutators) {
       for (const mut of state.challenge.mutators) mut.apply();
       pushEvent(`Daily challenge: ${state.challenge.labels.join(", ")}`);
+    }
+    if (state.runMode === "gauntlet") {
+      state.waveLength = 20;
+      state.runMods.enemySpeedMul *= 1.12;
+      state.runMods.spawnMul *= 1.2;
+      state.runMods.scoreMul *= 1.2;
+      player.damage *= 1.08;
+      pushEvent("Gauntlet protocol active.");
+    }
+    if (state.runMode === "nightmare") {
+      state.waveLength = 18;
+      state.runMods.enemySpeedMul *= 1.18;
+      state.runMods.enemyHpMul *= 1.16;
+      state.runMods.spawnMul *= 1.28;
+      state.runMods.scoreMul *= 1.45;
+      player.maxHp *= 0.92;
+      player.hp *= 0.92;
+      player.damage *= 1.05;
+      pushEvent("Nightmare protocol active.");
     }
     startWavePackage();
     saveRun();
@@ -2186,7 +2374,11 @@
       else return false;
     } else {
       if (pointInRect(pt, btn.back)) state.menuScreen = "home";
-      else if (pointInRect(pt, btn.codexToggle)) state.codexTab = state.codexTab === "synergy" ? "mastery" : "synergy";
+      else if (pointInRect(pt, btn.codexToggle)) {
+        const tabs = ["synergy", "mastery", "achievements"];
+        const idx = tabs.indexOf(state.codexTab);
+        state.codexTab = tabs[(idx + 1 + tabs.length) % tabs.length];
+      }
       else return false;
     }
     return true;
@@ -2302,7 +2494,9 @@
     if (state.mode === "menu" && k === "y") toggleRunMode();
     if (state.mode === "menu" && k === "k") state.menuScreen = "codex";
     if (state.mode === "menu" && state.menuScreen === "codex" && k === "m") {
-      state.codexTab = state.codexTab === "synergy" ? "mastery" : "synergy";
+      const tabs = ["synergy", "mastery", "achievements"];
+      const idx = tabs.indexOf(state.codexTab);
+      state.codexTab = tabs[(idx + 1 + tabs.length) % tabs.length];
     }
     if (state.mode === "menu" && k === "n") cycleClass();
     if (state.mode === "menu" && state.menuScreen === "home" && k === "c") continueSavedRun();
@@ -2364,6 +2558,9 @@
     if (state.mode === "gameover" && k === "r") resetGame();
     if (state.mode === "levelup" && ["1", "2", "3"].includes(k)) pickUpgrade(Number(k) - 1);
     if (state.mode === "relic" && ["1", "2", "3"].includes(k)) pickRelic(Number(k) - 1);
+    if (state.mode === "shop" && ["1", "2", "3"].includes(k)) pickShopOffer(Number(k) - 1);
+    if (state.mode === "shop" && k === "4") rerollShopOffers();
+    if (state.mode === "shop" && k === "0") skipShop();
     if (state.mode === "levelup" && k === "4") rerollChoices(false);
     if (state.mode === "levelup" && ["5", "6", "7"].includes(k)) banishChoice(Number(k) - 5);
     if (["1", "2", "3"].includes(k) && state.mode === "playing") {
@@ -2423,6 +2620,29 @@
         }
       }
     }
+    if (state.mode === "shop") {
+      const pt = toCanvasCoords(evt);
+      const rerollBtn = { x: WIDTH * 0.22, y: HEIGHT * 0.79, w: 220, h: 52 };
+      const skipBtn = { x: WIDTH * 0.54, y: HEIGHT * 0.79, w: 220, h: 52 };
+      if (pt.x >= rerollBtn.x && pt.x <= rerollBtn.x + rerollBtn.w && pt.y >= rerollBtn.y && pt.y <= rerollBtn.y + rerollBtn.h) {
+        rerollShopOffers();
+        return;
+      }
+      if (pt.x >= skipBtn.x && pt.x <= skipBtn.x + skipBtn.w && pt.y >= skipBtn.y && pt.y <= skipBtn.y + skipBtn.h) {
+        skipShop();
+        return;
+      }
+      for (let i = 0; i < 3; i++) {
+        const x = WIDTH * 0.16 + i * 310;
+        const y = HEIGHT * 0.34;
+        const w = 260;
+        const h = 210;
+        if (pt.x >= x && pt.x <= x + w && pt.y >= y && pt.y <= y + h) {
+          pickShopOffer(i);
+          break;
+        }
+      }
+    }
   });
 
   function toggleFullscreen() {
@@ -2468,6 +2688,8 @@
       shield_carrier: { hp: 70, speed: 70, r: 16, color: "#9fd1ff", value: 28, carrier: true },
       kamikaze: { hp: 18, speed: 145, r: 10, color: "#ff8e7d", value: 19, kamikaze: true },
       summoner: { hp: 58, speed: 64, r: 17, color: "#c7a1ff", value: 34, summon: 4.2, summoner: true },
+      turret: { hp: 64, speed: 0, r: 15, color: "#ffb48b", value: 26, shoot: 1.35, turret: true },
+      phaser: { hp: 40, speed: 92, r: 12, color: "#9ee4ff", value: 25, shoot: 2.2, phaser: true, phase: 3.2 },
       mini: { hp: 520, speed: 54, r: 28, color: "#ffd081", value: 180, shoot: 1.25, mini: true },
       boss: {
         dreadnought: { hp: 880, speed: 34, r: 40, color: "#ff4d7f", value: 520, shoot: 1.6, burst: 2.9 },
@@ -2509,6 +2731,9 @@
       carrier: Boolean(d.carrier),
       kamikaze: Boolean(d.kamikaze),
       summoner: Boolean(d.summoner),
+      turret: Boolean(d.turret),
+      phaser: Boolean(d.phaser),
+      phaseCd: d.phase ? d.phase : 999,
       mini: Boolean(d.mini),
       elite,
       telegraphShot: 0,
@@ -2524,9 +2749,14 @@
     const modifier = state.waveModifier || waveModifiers[0];
     const lateRamp = state.wave >= 8 ? 1 + (state.wave - 7) * 0.055 : 1;
     const heatPressure = 1 + state.heat * 0.006;
-    const pacing = Math.max(0.18, (1.3 - state.wave * 0.06) / (modifier.spawnMul * state.runMods.spawnMul * lateRamp * heatPressure));
+    const runPressure = state.runMode === "nightmare" ? 1.2 : state.runMode === "gauntlet" ? 1.08 : 1;
+    const pacing = Math.max(0.16, (1.3 - state.wave * 0.06) / (modifier.spawnMul * state.runMods.spawnMul * lateRamp * heatPressure * runPressure));
     const quality = getQualitySettings();
-    const enemyCap = Math.max(8, Math.floor(quality.enemyCap * state.perf.adaptiveEnemyCapMul * (state.wave >= 10 ? 1.22 : 1) * (1 + state.heat * 0.003)));
+    const runCapMul = state.runMode === "nightmare" ? 1.18 : state.runMode === "gauntlet" ? 1.08 : 1;
+    const enemyCap = Math.max(
+      9,
+      Math.floor(quality.enemyCap * state.perf.adaptiveEnemyCapMul * runCapMul * (state.wave >= 10 ? 1.22 : 1) * (1 + state.heat * 0.003))
+    );
     state.danger += dt;
     if (state.danger >= pacing && state.enemies.length < enemyCap) {
       state.danger = 0;
@@ -2538,8 +2768,12 @@
       if (state.wave >= 6 && rng.next() < 0.3) addEnemy("shield_carrier");
       if (state.wave >= 6 && rng.next() < 0.33) addEnemy("kamikaze");
       if (state.wave >= 8 && rng.next() < 0.25) addEnemy("summoner");
+      if (state.wave >= 7 && rng.next() < 0.22) addEnemy("turret");
+      if (state.wave >= 7 && rng.next() < 0.24) addEnemy("phaser");
       if (state.wave >= 5 && rng.next() < 0.28) addEnemy("tank");
       if (state.heat >= 70 && state.wave >= 7 && rng.next() < 0.18) addEnemy("kamikaze");
+      if (state.runMode === "nightmare" && state.wave >= 5 && rng.next() < 0.22) addEnemy("phaser");
+      if (state.runMode === "nightmare" && state.wave >= 6 && rng.next() < 0.2) addEnemy("turret");
     }
     if (state.waveClock >= state.waveLength) {
       state.wave += 1;
@@ -2549,6 +2783,7 @@
       state.flash = 0.35;
       startWavePackage();
       tryOpenRelicChoice();
+      if (state.mode === "playing") tryOpenShopChoice();
     }
   }
 
@@ -2610,8 +2845,9 @@
     const dir = getAimDirection();
     const scatterBonus = state.selectedWeapon === "scatter" && masteryTier >= 2 ? 1 : 0;
     const evoScatterBonus = state.selectedWeapon === "scatter" && evolved ? 1 : 0;
-    const shots = w.shots + player.multishot + scatterBonus + evoScatterBonus;
-    const fireRate = w.cooldown / (player.fireRateMult * (state.overclock > 0 ? 1.45 : 1));
+    const starstormMult = state.starstorm > 0 ? 1.45 : 1;
+    const shots = w.shots + player.multishot + scatterBonus + evoScatterBonus + (state.starstorm > 0 ? 1 : 0);
+    const fireRate = w.cooldown / (player.fireRateMult * (state.overclock > 0 ? 1.45 : 1) * starstormMult);
     player.fireCd = fireRate;
     state.evoPulseCounter += 1;
     playSfx(state.selectedWeapon === "rail" ? 280 : state.selectedWeapon === "scatter" ? 240 : 330, 0.03, "triangle", 0.08);
@@ -2717,6 +2953,7 @@
   function rewardKill(enemy) {
     const modifier = state.waveModifier || waveModifiers[0];
     state.kills += 1;
+    if (state.kills >= 1) unlockAchievement("first_blood");
     const heatGain = enemy.boss ? 22 : enemy.mini ? 14 : enemy.elite ? 7 : 3.6;
     state.heat = Math.min(100, state.heat + heatGain);
     state.streak += 1;
@@ -2725,6 +2962,9 @@
     const streakBonus = 1 + Math.min(0.8, state.streak * 0.015);
     const scoreGain = enemy.value * comboBoost * streakBonus * (state.overclock > 0 ? 1.3 : 1) * modifier.scoreMul * state.runMods.scoreMul;
     state.score += scoreGain;
+    const chargeGain = enemy.boss ? 48 : enemy.mini ? 20 : enemy.elite ? 10 : 4;
+    const ultMul = state.runMode === "nightmare" ? 0.72 : state.runMode === "gauntlet" ? 0.86 : 1;
+    player.ultimateCharge = Math.min(100, player.ultimateCharge + chargeGain * ultMul);
     player.scrap += Math.ceil(enemy.value * 0.35 * player.salvageMult);
     player.xp += enemy.value * 0.55;
     const weaponUsed = state.selectedWeapon;
@@ -2754,6 +2994,7 @@
       }
     }
     if (enemy.boss) {
+      unlockAchievement("boss_breaker");
       player.bombs += 1;
       player.shield += 25;
       state.flash = Math.max(state.flash, 0.36);
@@ -2838,6 +3079,14 @@
     if (!state.unlockedWeapons.scatter && player.level >= 3 && !state.bannedUpgrades.weapon_scatter) forced.push("weapon_scatter");
     if (!state.unlockedWeapons.rail && player.level >= 6 && !state.bannedUpgrades.weapon_rail) forced.push("weapon_rail");
     if (player.droneCount === 0 && player.level >= 4 && !state.bannedUpgrades.drone) forced.push("drone");
+    if (
+      state.coopJoined &&
+      player.level >= 7 &&
+      player.wingTreeOffense + player.wingTreeDefense + player.wingTreeUtility === 0 &&
+      !state.bannedUpgrades.wing_tree_offense
+    ) {
+      forced.push("wing_tree_offense");
+    }
     for (const id of forced) {
       if (state.choices.length >= 3) break;
       const idx = pool.findIndex((u) => u.id === id);
@@ -2905,6 +3154,36 @@
     spawnParticles(player.x, player.y, "#f7f6c7", 40, 300);
     playSfx(150, 0.12, "sawtooth", 0.28);
     pushEvent("Nova bomb detonated.");
+  }
+
+  function pulseStarstorm() {
+    const radius = 250;
+    const modeMul = state.runMode === "nightmare" ? 0.78 : state.runMode === "gauntlet" ? 0.9 : 1;
+    const base = (46 + state.wave * 1.4) * modeMul;
+    for (let i = state.enemies.length - 1; i >= 0; i--) {
+      const e = state.enemies[i];
+      const d = Math.hypot(e.x - player.x, e.y - player.y);
+      if (d < radius) {
+        e.hp -= base;
+        e.hitFlash = 0.1;
+        if (e.hp <= 0) enemyDie(i);
+      }
+    }
+    state.flash = Math.max(state.flash, 0.18);
+    spawnParticles(player.x, player.y, "#b9f7ff", 24, 210);
+  }
+
+  function activateStarstorm() {
+    if (state.mode !== "playing" || player.ultimateCharge < 100 || player.ultimateCd > 0) return;
+    const modeCd = state.runMode === "nightmare" ? 26 : state.runMode === "gauntlet" ? 24 : 22;
+    const modeDuration = state.runMode === "nightmare" ? 4.8 : state.runMode === "gauntlet" ? 5.5 : 6;
+    player.ultimateCharge = 0;
+    player.ultimateCd = modeCd;
+    state.starstorm = modeDuration;
+    state.starstormTick = 0;
+    pushEvent("Ultimate: Starstorm active.");
+    playSfx(180, 0.14, "sawtooth", 0.24);
+    pulseStarstorm();
   }
 
   function forceNextWave(triggeredByPlayer) {
@@ -3053,6 +3332,7 @@
     shoot();
     if (actionPressed("bomb")) activateBomb();
     if (actionPressed("warp")) forceNextWave(true);
+    if (state.keyPressed.has("z")) activateStarstorm();
   }
 
   function updateWingman(dt) {
@@ -3225,6 +3505,10 @@
       const uy = dy / d;
       e.vx += (ux * e.speed * freezeMul - e.vx) * Math.min(1, dt * 5);
       e.vy += (uy * e.speed * freezeMul - e.vy) * Math.min(1, dt * 5);
+      if (e.turret) {
+        e.vx *= Math.max(0, 1 - dt * 9);
+        e.vy *= Math.max(0, 1 - dt * 9);
+      }
       if (e.sniper && d < 280) {
         e.vx += (-ux * 180 - e.vx) * Math.min(1, dt * 4);
         e.vy += (-uy * 180 - e.vy) * Math.min(1, dt * 4);
@@ -3239,6 +3523,17 @@
       e.hitFlash = Math.max(0, e.hitFlash - dt);
       e.telegraphShot = Math.max(0, (e.telegraphShot || 0) - dt);
       e.telegraphBurst = Math.max(0, (e.telegraphBurst || 0) - dt);
+      if (e.phaser) {
+        e.phaseCd -= dt * freezeMul;
+        if (e.phaseCd <= 0) {
+          e.phaseCd = 3.3;
+          const a = rng.range(0, TAU);
+          const dist = rng.range(90, 180);
+          e.x = Math.max(e.r, Math.min(WIDTH - e.r, player.x + Math.cos(a) * dist));
+          e.y = Math.max(e.r, Math.min(HEIGHT - e.r, player.y + Math.sin(a) * dist));
+          spawnParticles(e.x, e.y, "#9ee4ff", 16, 150);
+        }
+      }
       if (e.boss) {
         const hpRatio = e.maxHp > 0 ? e.hp / e.maxHp : 0;
         const phase = hpRatio <= 0.33 ? 3 : hpRatio <= 0.67 ? 2 : 1;
@@ -3275,6 +3570,24 @@
             life: 4,
             damage: (8 + state.wave * 0.75) * (e.elite ? 1.28 : 1),
           });
+        }
+      }
+      if (e.turret) {
+        e.shootCd -= dt * freezeMul;
+        if (e.shootCd <= 0) {
+          e.shootCd = 1.15;
+          for (let i = -1; i <= 1; i++) {
+            const a = Math.atan2(uy, ux) + i * 0.18;
+            state.enemyProjectiles.push({
+              x: e.x,
+              y: e.y,
+              vx: Math.cos(a) * 280 * state.runMods.projectileSpeedMul,
+              vy: Math.sin(a) * 280 * state.runMods.projectileSpeedMul,
+              r: 6,
+              life: 4.2,
+              damage: 8 + state.wave * 0.8,
+            });
+          }
         }
       }
       if (e.sniper && d > 180) {
@@ -3539,6 +3852,8 @@
     if (gameplayActive) {
       state.overclock = Math.max(0, state.overclock - dt);
       state.freeze = Math.max(0, state.freeze - dt);
+      state.starstorm = Math.max(0, state.starstorm - dt);
+      player.ultimateCd = Math.max(0, player.ultimateCd - dt);
       state.heat = Math.max(0, state.heat - dt * 2.8);
       state.waveSkipCd = Math.max(0, state.waveSkipCd - dt);
       if (player.shieldRegen > 0) player.shield = Math.min(160, player.shield + player.shieldRegen * dt);
@@ -3552,6 +3867,13 @@
       if (state.mission && !state.mission.complete && state.mission.id === "survive") {
         state.mission.progress = Math.min(state.mission.target, state.mission.progress + dt);
         if (state.mission.progress >= state.mission.target) applyMissionReward();
+      }
+      if (state.starstorm > 0) {
+        state.starstormTick -= dt;
+        if (state.starstormTick <= 0) {
+          state.starstormTick = 0.3;
+          pulseStarstorm();
+        }
       }
     }
     for (let i = state.damageNumbers.length - 1; i >= 0; i--) {
@@ -3828,6 +4150,7 @@
     ctx.fillText(`Wave ${state.wave}`, 30, 38);
     ctx.fillText(`Score ${Math.floor(state.score)}`, 30, 64);
     if (!compact) ctx.fillText(`Kills ${state.kills}`, 30, 89);
+    if (!compact) ctx.fillText(`Scrap ${Math.floor(player.scrap)}`, 170, 89);
     ctx.fillStyle = "#f1f7ff";
     ctx.fillText(
       `Weapon ${weaponDefs[state.selectedWeapon].name}${isWeaponEvolved(state.selectedWeapon) ? " EVO" : ""}`,
@@ -3855,7 +4178,7 @@
     ctx.fillText(`HP ${Math.ceil(player.hp)} / ${Math.ceil(player.maxHp)}`, 390, 35);
 
     ctx.fillStyle = "rgba(8, 12, 24, 0.7)";
-    ctx.fillRect(WIDTH - 320, 14, 304, 146);
+    ctx.fillRect(WIDTH - 320, 14, 304, 170);
     ctx.fillStyle = "#fff1b4";
     ctx.fillText(`Lvl ${player.level}  XP ${Math.floor(player.xp)} / ${player.nextXp}`, WIDTH - 306, 38);
     ctx.fillStyle = "#f7d8ff";
@@ -3864,6 +4187,7 @@
     ctx.fillText(`Bombs ${player.bombs} (${displayKey(state.settings.bombKey)})`, WIDTH - 306, 89);
     ctx.fillText(`Dash ${(player.dashCd <= 0 ? "Ready" : player.dashCd.toFixed(1) + "s")} (${displayKey(state.settings.dashKey)})`, WIDTH - 306, 114);
     ctx.fillText(`Warp ${(state.waveSkipCd <= 0 ? "Ready" : state.waveSkipCd.toFixed(1) + "s")} (${displayKey(state.settings.warpKey)})`, WIDTH - 306, 139);
+    ctx.fillText(`Ultimate ${Math.floor(player.ultimateCharge)}% (Z)`, WIDTH - 306, 163);
 
     ctx.fillStyle = "rgba(8, 12, 24, 0.7)";
     ctx.fillRect(16, 144, 350, compact ? 86 : 112);
@@ -3918,7 +4242,7 @@
       ctx.fillText(
         `Move WASD/Arrows | Auto-fire | Aim mouse | Bomb ${displayKey(state.settings.bombKey)} | Warp ${displayKey(
           state.settings.warpKey
-        )} | Pause P | Fullscreen F`,
+        )} | Ultimate Z | Pause P | Fullscreen F`,
         18,
         HEIGHT - 20
       );
@@ -3980,7 +4304,7 @@
         HEIGHT * 0.44
       );
       ctx.fillText("Online: H host room | G join room | X disconnect", WIDTH * 0.13, HEIGHT * 0.49);
-      ctx.fillText(`Run mode: ${state.runMode.toUpperCase()} (Y toggle daily, V seed/code load, B copy code)`, WIDTH * 0.13, HEIGHT * 0.54);
+      ctx.fillText(`Run mode: ${state.runMode.toUpperCase()} (Y cycle mode, V seed/code load, B copy code)`, WIDTH * 0.13, HEIGHT * 0.54);
       const classLabel = shipClasses[state.selectedClass]?.label || "Striker";
       const lockTag = isClassUnlocked(state.selectedClass) ? "" : " (LOCKED)";
       const classDesc = shipClasses[state.selectedClass]?.desc || "";
@@ -4023,7 +4347,7 @@
       ctx.fillRect(btn.copy.x, btn.copy.y, btn.copy.w, btn.copy.h);
       ctx.fillRect(btn.coop.x, btn.coop.y, btn.coop.w, btn.coop.h);
       ctx.fillStyle = "#122947";
-      ctx.fillText("Toggle Daily", btn.daily.x + 16, btn.daily.y + 23);
+      ctx.fillText("Cycle Mode", btn.daily.x + 18, btn.daily.y + 23);
       ctx.fillText("Set Seed", btn.seed.x + 42, btn.seed.y + 23);
       ctx.fillText("Copy Code", btn.copy.x + 32, btn.copy.y + 23);
       ctx.fillText("Co-op", btn.coop.x + 20, btn.coop.y + 23);
@@ -4110,7 +4434,8 @@
       ctx.fillRect(btn.codexToggle.x, btn.codexToggle.y, btn.codexToggle.w, btn.codexToggle.h);
       ctx.fillStyle = "#122947";
       ctx.font = "22px Trebuchet MS";
-      ctx.fillText(`Open ${state.codexTab === "synergy" ? "Mastery" : "Synergy"} Tab`, btn.codexToggle.x + 18, btn.codexToggle.y + 34);
+      const nextTab = state.codexTab === "synergy" ? "Mastery" : state.codexTab === "mastery" ? "Achievements" : "Synergy";
+      ctx.fillText(`Open ${nextTab} Tab`, btn.codexToggle.x + 18, btn.codexToggle.y + 34);
 
       if (state.codexTab === "synergy") {
         const discovered = Object.keys(state.synergies);
@@ -4134,7 +4459,7 @@
           row += 1;
           if (row >= 6) break;
         }
-      } else {
+      } else if (state.codexTab === "mastery") {
         ctx.fillStyle = "#dff0ff";
         ctx.font = "24px Trebuchet MS";
         ctx.fillText("Weapon Mastery (persistent across runs)", WIDTH * 0.13, HEIGHT * 0.42);
@@ -4157,6 +4482,21 @@
             ctx.fillStyle = lines[l].includes("(active)") ? "#9ff5cd" : "#b9cee9";
             ctx.fillText(`- ${lines[l]}`, WIDTH * 0.16, y + 22 + l * 18);
           }
+        }
+      } else {
+        ctx.fillStyle = "#dff0ff";
+        ctx.font = "24px Trebuchet MS";
+        const unlocked = Object.values(state.meta?.achievements || {}).filter(Boolean).length;
+        ctx.fillText(`Achievements ${unlocked} / ${achievementDefs.length}`, WIDTH * 0.13, HEIGHT * 0.42);
+        ctx.font = "19px Trebuchet MS";
+        let row = 0;
+        for (const a of achievementDefs) {
+          const done = Boolean(state.meta?.achievements?.[a.id]);
+          ctx.fillStyle = done ? "#a8ffd2" : "#dce7ff";
+          ctx.fillText(`${done ? "UNLOCKED" : "LOCKED"} - ${a.label}`, WIDTH * 0.13, HEIGHT * 0.48 + row * 42);
+          ctx.fillStyle = "#a6bbdd";
+          ctx.fillText(a.note, WIDTH * 0.43, HEIGHT * 0.48 + row * 42);
+          row += 1;
         }
       }
       ctx.fillStyle = "rgba(143, 190, 255, 0.95)";
@@ -4285,6 +4625,53 @@
     }
   }
 
+  function drawShop() {
+    ctx.fillStyle = "rgba(6, 10, 22, 0.8)";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillStyle = "#f3ddb0";
+    ctx.font = "56px Trebuchet MS";
+    ctx.fillText("BLACK MARKET", WIDTH * 0.31, HEIGHT * 0.2);
+    ctx.font = "22px Trebuchet MS";
+    ctx.fillStyle = "#d9e7ff";
+    ctx.fillText(`Scrap ${Math.floor(player.scrap)} | Pick offer (1/2/3) | Reroll (4) | Skip (0)`, WIDTH * 0.23, HEIGHT * 0.27);
+    for (let i = 0; i < 3; i++) {
+      const o = state.shopOffers[i];
+      const x = WIDTH * 0.16 + i * 310;
+      const y = HEIGHT * 0.34;
+      const w = 260;
+      const h = 210;
+      ctx.fillStyle = "rgba(20, 35, 68, 0.95)";
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = "#96bdff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = "#f2e4a5";
+      ctx.font = "24px Trebuchet MS";
+      ctx.fillText(`${i + 1}`, x + 16, y + 34);
+      if (!o) continue;
+      const afford = player.scrap >= o.cost;
+      ctx.fillStyle = "#eef5ff";
+      ctx.font = "28px Trebuchet MS";
+      ctx.fillText(o.label, x + 18, y + 82);
+      ctx.fillStyle = afford ? "#8dffc9" : "#ffb9b0";
+      ctx.font = "22px Trebuchet MS";
+      ctx.fillText(`Cost ${o.cost}`, x + 18, y + 124);
+      ctx.fillStyle = "#a8bfdf";
+      ctx.font = "18px Trebuchet MS";
+      ctx.fillText(afford ? "Click or press number to buy" : "Need more scrap", x + 18, y + 160);
+    }
+    const rerollBtn = { x: WIDTH * 0.22, y: HEIGHT * 0.79, w: 220, h: 52 };
+    const skipBtn = { x: WIDTH * 0.54, y: HEIGHT * 0.79, w: 220, h: 52 };
+    ctx.fillStyle = state.shopRefreshes > 0 ? "rgba(124, 184, 255, 0.95)" : "rgba(78, 96, 124, 0.8)";
+    ctx.fillRect(rerollBtn.x, rerollBtn.y, rerollBtn.w, rerollBtn.h);
+    ctx.fillStyle = "rgba(132, 176, 214, 0.95)";
+    ctx.fillRect(skipBtn.x, skipBtn.y, skipBtn.w, skipBtn.h);
+    ctx.fillStyle = "#122947";
+    ctx.font = "24px Trebuchet MS";
+    ctx.fillText(`Reroll (4) x${state.shopRefreshes}`, rerollBtn.x + 24, rerollBtn.y + 35);
+    ctx.fillText("Skip (0)", skipBtn.x + 66, skipBtn.y + 35);
+  }
+
   function drawGameOver() {
     ctx.fillStyle = "rgba(8, 0, 12, 0.7)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -4311,6 +4698,8 @@
       HEIGHT * 0.7
     );
     ctx.fillText(`Daily streak ${state.meta?.dailyStreak || 0}`, WIDTH * 0.2, HEIGHT * 0.74);
+    const ach = Object.values(state.meta?.achievements || {}).filter(Boolean).length;
+    ctx.fillText(`Achievements ${ach}/${achievementDefs.length}`, WIDTH * 0.2, HEIGHT * 0.78);
   }
 
   function drawOnlineOverlay() {
@@ -4379,6 +4768,7 @@
     if (state.mode === "paused") drawPause();
     if (state.mode === "levelup") drawLevelUp();
     if (state.mode === "relic") drawRelicSelect();
+    if (state.mode === "shop") drawShop();
     if (state.mode === "gameover") drawGameOver();
     if (state.mode !== "menu") drawHud();
     drawOnlineOverlay();
@@ -4453,6 +4843,8 @@
         level: player.level,
         rerolls: player.rerolls,
         banishes: player.banishes,
+        ultimateCharge: Number(player.ultimateCharge.toFixed(1)),
+        ultimateCooldown: Number(player.ultimateCd.toFixed(2)),
         xp: Number(player.xp.toFixed(1)),
         xpToNext: player.nextXp,
         weapon: state.selectedWeapon,
@@ -4505,6 +4897,7 @@
             complete: state.bounty.complete,
           }
         : null,
+      shop: state.mode === "shop" ? { refreshes: state.shopRefreshes, offers: state.shopOffers.map((o) => ({ id: o.id, cost: o.cost, label: o.label })) } : null,
       activeEvent: state.activeEvent
         ? {
             id: state.activeEvent.id,
@@ -4526,6 +4919,7 @@
         masteryKills: state.meta?.masteryKills || { pulse: 0, scatter: 0, rail: 0 },
         totalShardsEarned: state.meta?.totalShardsEarned || 0,
         unlocks: state.meta?.unlocks || { vanguard: false, engineer: false, phantom: false, rareRelics: false, trail: false },
+        achievements: state.meta?.achievements || {},
         perks: state.meta?.perks || { hull: 0, cannons: 0, thrusters: 0 },
       },
       score: Number(state.score.toFixed(1)),
