@@ -180,10 +180,26 @@
     { id: "frenzy", name: "Frenzy", speedMul: 1.08, hpMul: 1.08, spawnMul: 1.25, scoreMul: 1.35, color: "#ffb6cf" },
   ];
   const shipClasses = {
-    striker: { label: "Striker", apply: () => ((player.damage *= 1.18), (player.speed *= 1.08), (player.maxHp -= 8), (player.hp -= 8)) },
-    vanguard: { label: "Vanguard", apply: () => ((player.maxHp += 26), (player.hp += 26), (player.damageReduction += 0.08), (player.speed *= 0.94)) },
-    engineer: { label: "Engineer", apply: () => ((player.droneCount += 1), (player.shield += 18), (player.bombCdMult *= 0.86)) },
-    phantom: { label: "Phantom", apply: () => ((player.speed *= 1.14), (player.dashCdMult *= 0.78), (player.damage *= 0.92), (player.critChance += 0.04)) },
+    striker: {
+      label: "Striker",
+      desc: "+18% dmg, +8% speed, -8 HP",
+      apply: () => ((player.damage *= 1.18), (player.speed *= 1.08), (player.maxHp -= 8), (player.hp -= 8)),
+    },
+    vanguard: {
+      label: "Vanguard",
+      desc: "+26 HP, +8% DR, -6% speed",
+      apply: () => ((player.maxHp += 26), (player.hp += 26), (player.damageReduction += 0.08), (player.speed *= 0.94)),
+    },
+    engineer: {
+      label: "Engineer",
+      desc: "+1 drone, +18 shield, -14% bomb CD",
+      apply: () => ((player.droneCount += 1), (player.shield += 18), (player.bombCdMult *= 0.86)),
+    },
+    phantom: {
+      label: "Phantom",
+      desc: "+14% speed, -22% dash CD, -8% dmg, +4% crit",
+      apply: () => ((player.speed *= 1.14), (player.dashCdMult *= 0.78), (player.damage *= 0.92), (player.critChance += 0.04)),
+    },
   };
   const biomes = [
     { id: "nebula", label: "Nebula Drift", bgTop: "#1b2454", bgMid: "#151f45", bgBot: "#0a1431", mods: { scoreMul: 1.06 } },
@@ -370,6 +386,8 @@
     dashPower: 620,
     bombs: 1,
     bombCd: 0,
+    burstCd: 0,
+    supportCd: 0,
   };
 
   function defaultMeta() {
@@ -1093,7 +1111,7 @@
     if (state.keysDown.has("l")) down.push("l");
     return {
       down,
-      pressed: ["o", "u"].filter((k) => state.keyPressed.has(k)),
+      pressed: ["o", "u", "y", "h"].filter((k) => state.keyPressed.has(k)),
     };
   }
 
@@ -1953,6 +1971,8 @@
     wingman.dashTimer = 0;
     wingman.bombs = 1;
     wingman.bombCd = 0;
+    wingman.burstCd = 0;
+    wingman.supportCd = 0;
     state.unlockedWeapons = { pulse: true, scatter: false, rail: false };
     if (state.runMode === "daily") {
       const challenge = buildTodayChallenge();
@@ -2916,12 +2936,49 @@
     spawnParticles(wingman.x, wingman.y, "#b7fffb", 22, 230);
   }
 
+  function wingmanBurst() {
+    if (!state.coopJoined || state.mode !== "playing" || wingman.burstCd > 0) return;
+    wingman.burstCd = Math.max(4.2, 8.2 - player.wingTreeUtility * 1.1);
+    const count = 10;
+    for (let i = 0; i < count; i++) {
+      const a = (TAU / count) * i + state.time * 0.25;
+      state.projectiles.push({
+        owner: "wingman",
+        x: wingman.x + Math.cos(a) * (wingman.r + 2),
+        y: wingman.y + Math.sin(a) * (wingman.r + 2),
+        vx: Math.cos(a) * 520 * player.projectileSpeedMult,
+        vy: Math.sin(a) * 520 * player.projectileSpeedMult,
+        r: 3.8 * player.projectileSizeMult,
+        life: 0.95 * player.rangeMult,
+        damage: player.damage * (0.44 + player.wingTreeOffense * 0.08) * player.wingmanDamageMult,
+        color: "#8dffe8",
+        pierce: 1 + Math.floor(player.wingTreeOffense * 0.34),
+      });
+    }
+    state.flash = Math.max(state.flash, 0.12);
+    playSfx(260, 0.07, "square", 0.18);
+  }
+
+  function wingmanSupportPulse() {
+    if (!state.coopJoined || state.mode !== "playing" || wingman.supportCd > 0) return;
+    wingman.supportCd = Math.max(6.5, 12 - player.wingTreeUtility * 1.2);
+    const shieldGain = 8 + player.wingTreeDefense * 5;
+    player.shield += shieldGain;
+    wingman.bombs += player.wingTreeUtility >= 2 ? 1 : 0;
+    wingman.dashCd = Math.max(0, wingman.dashCd - (0.5 + player.wingTreeUtility * 0.12));
+    spawnParticles(wingman.x, wingman.y, "#b8ffea", 20, 170);
+    pushEvent(`Wingman pulse: +${shieldGain} shield.`);
+    playSfx(330, 0.06, "triangle", 0.16);
+  }
+
   function shootWingman() {
     if (!state.coopJoined || state.mode !== "playing" || wingman.fireCd > 0) return;
     const dir = getNearestEnemyDirection(wingman.x, wingman.y, wingman.aimAngle);
     wingman.aimAngle = dir.angle;
-    const rate = 0.18 / (player.fireRateMult * (0.95 + player.wingTreeOffense * 0.06));
+    const modeRateMul = state.wingmanMode === "aggressive" ? 1.12 : state.wingmanMode === "support" ? 0.92 : 1;
+    const rate = 0.18 / (player.fireRateMult * modeRateMul * (0.95 + player.wingTreeOffense * 0.06));
     wingman.fireCd = rate;
+    const modeDamageMul = state.wingmanMode === "aggressive" ? 1.12 : state.wingmanMode === "support" ? 0.9 : 1;
     state.projectiles.push({
       owner: "wingman",
       x: wingman.x + Math.cos(wingman.aimAngle) * (wingman.r + 4),
@@ -2930,7 +2987,7 @@
       vy: Math.sin(wingman.aimAngle) * 630 * player.projectileSpeedMult,
       r: 4 * player.projectileSizeMult,
       life: 1.05 * player.rangeMult,
-      damage: player.damage * (0.7 + player.wingTreeOffense * 0.12) * player.wingmanDamageMult,
+      damage: player.damage * (0.85 + player.wingTreeOffense * 0.12) * player.wingmanDamageMult * modeDamageMul,
       color: "#7dffca",
       pierce: 1 + Math.floor(player.bonusPierce * 0.5),
     });
@@ -3003,7 +3060,7 @@
     const wingDown =
       state.net.mode === "host" ? state.net.guestInput.down : new Set(["j", "l", "i", "k"].filter((k) => state.keysDown.has(k)));
     const wingPressed =
-      state.net.mode === "host" ? state.net.guestInput.pressed : new Set(["o", "u"].filter((k) => state.keyPressed.has(k)));
+      state.net.mode === "host" ? state.net.guestInput.pressed : new Set(["o", "u", "y", "h"].filter((k) => state.keyPressed.has(k)));
     const left = wingDown.has("j");
     const right = wingDown.has("l");
     const up = wingDown.has("i");
@@ -3054,8 +3111,12 @@
     wingman.dashCd = Math.max(0, wingman.dashCd - dt);
     wingman.dashTimer = Math.max(0, wingman.dashTimer - dt);
     wingman.bombCd = Math.max(0, wingman.bombCd - dt);
+    wingman.burstCd = Math.max(0, (wingman.burstCd || 0) - dt);
+    wingman.supportCd = Math.max(0, (wingman.supportCd || 0) - dt);
     shootWingman();
     if (wingPressed.has("u")) wingmanBomb();
+    if (wingPressed.has("y")) wingmanBurst();
+    if (wingPressed.has("h")) wingmanSupportPulse();
   }
 
   function updateProjectiles(dt) {
@@ -3864,7 +3925,7 @@
     }
     if (state.coopJoined) {
       ctx.fillStyle = "#8cf8d7";
-      if (!compact) ctx.fillText("Co-op P2: IJKL move | O dash | U bomb | Auto-aim fire", 18, HEIGHT - 38);
+      if (!compact) ctx.fillText("Co-op P2: IJKL move | O dash | U bomb | Y burst | H support | Auto-aim fire", 18, HEIGHT - 38);
       ctx.fillText(`P2 Bombs ${wingman.bombs} | P2 Dash ${wingman.dashCd <= 0 ? "Ready" : wingman.dashCd.toFixed(1) + "s"}`, WIDTH - 320, 178);
       if (!compact) ctx.fillText(`Wingman mode ${state.wingmanMode.toUpperCase()} (T to cycle)`, WIDTH - 320, 198);
     }
@@ -3914,7 +3975,7 @@
         HEIGHT * 0.39
       );
       ctx.fillText(
-        `Co-op ${state.coopJoined ? "ON" : "OFF"} (J) | Wingman ${state.wingmanMode.toUpperCase()} (T) | P2: IJKL move, O dash, U bomb`,
+        `Co-op ${state.coopJoined ? "ON" : "OFF"} (J) | Wingman ${state.wingmanMode.toUpperCase()} (T) | P2: IJKL, O dash, U bomb, Y burst, H support`,
         WIDTH * 0.13,
         HEIGHT * 0.44
       );
@@ -3922,7 +3983,8 @@
       ctx.fillText(`Run mode: ${state.runMode.toUpperCase()} (Y toggle daily, V seed/code load, B copy code)`, WIDTH * 0.13, HEIGHT * 0.54);
       const classLabel = shipClasses[state.selectedClass]?.label || "Striker";
       const lockTag = isClassUnlocked(state.selectedClass) ? "" : " (LOCKED)";
-      ctx.fillText(`Ship class: ${classLabel}${lockTag} (N) | Continue (C)`, WIDTH * 0.13, HEIGHT * 0.59);
+      const classDesc = shipClasses[state.selectedClass]?.desc || "";
+      ctx.fillText(`Ship class: ${classLabel}${lockTag} (${classDesc}) (N) | Continue (C)`, WIDTH * 0.13, HEIGHT * 0.59);
       if (state.challenge?.code) {
         ctx.fillText(`Daily ${state.challenge.code} | ${state.challenge.labels.join(" / ")}`, WIDTH * 0.13, HEIGHT * 0.63);
       }
@@ -4404,6 +4466,8 @@
             bombs: wingman.bombs,
             dashCooldown: Number(wingman.dashCd.toFixed(2)),
             bombCooldown: Number(wingman.bombCd.toFixed(2)),
+            burstCooldown: Number((wingman.burstCd || 0).toFixed(2)),
+            supportCooldown: Number((wingman.supportCd || 0).toFixed(2)),
           }
         : null,
       targets: state.enemies.slice(0, 14).map((e) => ({

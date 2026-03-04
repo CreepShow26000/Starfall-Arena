@@ -398,3 +398,15 @@ Original prompt: Create a really fun really really high quality game i can play 
     - Codex behavior intact
     - Gameplay HUD + wingman mode status
   - No console/page error artifact files observed in latest output directory checks.
+- Follow-up UX/combat pass based on user request:
+  - Added explicit ship class effect text directly in Home menu class line so players can see class impact while selecting.
+  - Local co-op quality improvements for P2:
+    - Added two new P2 active skills:
+      - `Y` = Wingman Burst (radial burst attack, cooldown)
+      - `H` = Wingman Support Pulse (shield support + utility interaction, cooldown)
+    - Added controls copy in HUD and Home menu for these actions.
+    - Increased baseline wingman combat impact and added mode-aware damage/fire-rate tuning.
+    - Wingman cooldown state now exposed in text state (`burstCooldown`, `supportCooldown`).
+- Validation:
+  - `node --check game.js` passed after edits.
+  - Playwright menu/gameplay regressions rerun; screenshots and state output remained stable.
