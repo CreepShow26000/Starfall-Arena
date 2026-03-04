@@ -114,6 +114,10 @@
     heat: 0,
     heatTier: 0,
     bounty: null,
+    hazards: [],
+    directorCd: 6,
+    wingmanMode: "balanced",
+    evoPulseCounter: 0,
     waveSkipCd: 0,
     pointer: { x: WIDTH * 0.5, y: HEIGHT * 0.5, inside: false },
     coopJoined: true,
@@ -188,12 +192,95 @@
     { id: "ion", label: "Ion Storm", bgTop: "#152f39", bgMid: "#11252e", bgBot: "#08161e", mods: { projectileSpeedMul: 1.1, scoreMul: 1.1 } },
   ];
   const relicDefs = [
-    { id: "sun_core", label: "Sun Core", apply: () => ((player.damage *= 1.25), (state.runMods.enemySpeedMul *= 1.08)) },
-    { id: "chrono_shard", label: "Chrono Shard", apply: () => ((player.fireRateMult *= 1.2), (player.dashCdMult *= 0.85)) },
-    { id: "void_glass", label: "Void Glass", apply: () => ((player.critChance += 0.14), (player.maxHp -= 20), (player.hp = Math.min(player.hp, player.maxHp))) },
-    { id: "forge_plate", label: "Forge Plate", apply: () => ((player.damageReduction += 0.12), (player.speed *= 0.93), (player.shield += 30)) },
-    { id: "swarm_node", label: "Swarm Node", apply: () => ((player.droneCount += 2), (player.wingmanDamageMult *= 1.2)) },
-    { id: "entropy_lens", label: "Entropy Lens", apply: () => ((state.runMods.scoreMul *= 1.2), (state.runMods.spawnMul *= 1.12)) },
+    {
+      id: "sun_core",
+      label: "Sun Core",
+      rarity: "common",
+      desc: "+25% damage, but enemies move 8% faster.",
+      apply: () => ((player.damage *= 1.25), (state.runMods.enemySpeedMul *= 1.08)),
+    },
+    {
+      id: "chrono_shard",
+      label: "Chrono Shard",
+      rarity: "common",
+      desc: "+20% fire rate and -15% dash cooldown.",
+      apply: () => ((player.fireRateMult *= 1.2), (player.dashCdMult *= 0.85)),
+    },
+    {
+      id: "void_glass",
+      label: "Void Glass",
+      rarity: "rare",
+      desc: "+14% crit chance, but -20 max HP.",
+      apply: () => ((player.critChance += 0.14), (player.maxHp -= 20), (player.hp = Math.min(player.hp, player.maxHp))),
+    },
+    {
+      id: "forge_plate",
+      label: "Forge Plate",
+      rarity: "common",
+      desc: "+12% damage reduction, +30 shield, but -7% speed.",
+      apply: () => ((player.damageReduction += 0.12), (player.speed *= 0.93), (player.shield += 30)),
+    },
+    {
+      id: "swarm_node",
+      label: "Swarm Node",
+      rarity: "rare",
+      desc: "+2 drones and +20% wingman damage.",
+      apply: () => ((player.droneCount += 2), (player.wingmanDamageMult *= 1.2)),
+    },
+    {
+      id: "entropy_lens",
+      label: "Entropy Lens",
+      rarity: "common",
+      desc: "+20% score multiplier, +12% enemy spawns.",
+      apply: () => ((state.runMods.scoreMul *= 1.2), (state.runMods.spawnMul *= 1.12)),
+    },
+    {
+      id: "arc_drive",
+      label: "Arc Drive",
+      rarity: "common",
+      desc: "+12% move speed and -12% dash cooldown.",
+      apply: () => ((player.speed *= 1.12), (player.dashCdMult *= 0.88)),
+    },
+    {
+      id: "bastion_matrix",
+      label: "Bastion Matrix",
+      rarity: "rare",
+      desc: "+18 max HP and +1.4 shield regen/s.",
+      apply: () => ((player.maxHp += 18), (player.hp += 18), (player.shieldRegen += 1.4)),
+    },
+    {
+      id: "storm_emitter",
+      label: "Storm Emitter",
+      rarity: "rare",
+      desc: "+18% projectile speed and +1 multishot.",
+      apply: () => ((player.projectileSpeedMult *= 1.18), (player.multishot = Math.min(3, player.multishot + 1))),
+    },
+    {
+      id: "guardian_halo",
+      label: "Guardian Halo",
+      rarity: "rare",
+      desc: "+8% damage reduction and +20 shield.",
+      apply: () => ((player.damageReduction = Math.min(0.62, player.damageReduction + 0.08)), (player.shield += 20)),
+    },
+    {
+      id: "greed_gear",
+      label: "Greed Gear",
+      rarity: "rare",
+      desc: "+28% salvage gains and +20% drop rate.",
+      apply: () => ((player.salvageMult *= 1.28), (player.dropRateMult *= 1.2)),
+    },
+    {
+      id: "singularity_core",
+      label: "Singularity Core",
+      rarity: "legendary",
+      desc: "+32% damage and +10% score, but -15 max HP and +14% enemy spawns.",
+      apply: () =>
+        ((player.damage *= 1.32),
+        (state.runMods.scoreMul *= 1.1),
+        (player.maxHp -= 15),
+        (player.hp = Math.min(player.hp, player.maxHp)),
+        (state.runMods.spawnMul *= 1.14)),
+    },
   ];
   const endgameMutators = [
     { id: "unstable", label: "Unstable Front", apply: () => ({ enemySpeedMul: 1.12, projectileSpeedMul: 1.1 }) },
@@ -206,6 +293,7 @@
     scatter: [90, 240, 520],
     rail: [70, 180, 420],
   };
+  const relicRarityColors = { common: "#c9dcff", rare: "#95f1d4", legendary: "#ffd58f" };
 
   const player = {
     x: WIDTH * 0.5,
@@ -259,6 +347,9 @@
     wingmanDamageMult: 1,
     salvageMult: 1,
     streakGuard: 0,
+    wingTreeOffense: 0,
+    wingTreeDefense: 0,
+    wingTreeUtility: 0,
     rerolls: 1,
     banishes: 1,
     contactDamageCd: 0,
@@ -291,6 +382,8 @@
       lastDailyClaim: "",
       weaponBest: { pulse: 0, scatter: 0, rail: 0 },
       masteryKills: { pulse: 0, scatter: 0, rail: 0 },
+      totalShardsEarned: 0,
+      unlocks: { vanguard: false, engineer: false, phantom: false, rareRelics: false, trail: false },
       perks: { hull: 0, cannons: 0, thrusters: 0 },
     };
   }
@@ -316,6 +409,14 @@
           pulse: Number(parsed.masteryKills?.pulse || 0),
           scatter: Number(parsed.masteryKills?.scatter || 0),
           rail: Number(parsed.masteryKills?.rail || 0),
+        },
+        totalShardsEarned: Number(parsed.totalShardsEarned || 0),
+        unlocks: {
+          vanguard: Boolean(parsed.unlocks?.vanguard || false),
+          engineer: Boolean(parsed.unlocks?.engineer || false),
+          phantom: Boolean(parsed.unlocks?.phantom || false),
+          rareRelics: Boolean(parsed.unlocks?.rareRelics || false),
+          trail: Boolean(parsed.unlocks?.trail || false),
         },
         perks: {
           hull: Number(parsed.perks?.hull || 0),
@@ -428,6 +529,10 @@
       heat: state.heat,
       heatTier: state.heatTier,
       bounty: state.bounty,
+      hazards: state.hazards,
+      directorCd: state.directorCd,
+      wingmanMode: state.wingmanMode,
+      evoPulseCounter: state.evoPulseCounter,
       waveSkipCd: state.waveSkipCd,
       coopJoined: state.coopJoined,
       player: { ...player },
@@ -509,6 +614,10 @@
       state.heat = Number(s.heat || 0);
       state.heatTier = Number(s.heatTier || 0);
       state.bounty = s.bounty || null;
+      state.hazards = Array.isArray(s.hazards) ? s.hazards : [];
+      state.directorCd = Number(s.directorCd || 6);
+      state.wingmanMode = ["balanced", "aggressive", "support"].includes(s.wingmanMode) ? s.wingmanMode : "balanced";
+      state.evoPulseCounter = Number(s.evoPulseCounter || 0);
       state.waveSkipCd = Number(s.waveSkipCd || 0);
       state.coopJoined = Boolean(s.coopJoined);
       Object.assign(player, s.player || {});
@@ -600,17 +709,45 @@
     pushEvent(`Resumed run on wave ${state.wave}.`);
   }
 
+  function encodeChallengeCode() {
+    const mode = state.runMode === "daily" ? "daily" : state.runMode === "seeded" ? "seeded" : "standard";
+    const seed = mode === "daily" ? state.challenge?.code || "DAILY" : state.runSeed || "STANDARD";
+    const cls = state.selectedClass || "striker";
+    return `SFCH|${seed}|${cls}|${mode}`;
+  }
+
+  function decodeChallengeCode(raw) {
+    const parts = String(raw || "").trim().split("|");
+    if (parts.length < 4 || parts[0] !== "SFCH") return null;
+    return { seed: parts[1] || "STANDARD", cls: parts[2] || "striker", mode: parts[3] || "standard" };
+  }
+
   function setCustomSeedFromPrompt() {
     const seed = prompt("Enter a custom seed code (letters/numbers):", state.runSeed || "");
-    if (seed && seed.trim()) {
-      state.runMode = "seeded";
-      state.runSeed = seed.trim();
-      pushEvent(`Seeded run ready: ${state.runSeed}`);
+    if (!seed || !seed.trim()) return;
+    const code = seed.trim();
+    const parsed = decodeChallengeCode(code);
+    if (parsed) {
+      state.runMode = ["daily", "seeded", "standard"].includes(parsed.mode) ? parsed.mode : "standard";
+      state.selectedClass = isClassUnlocked(parsed.cls) ? parsed.cls : "striker";
+      if (state.runMode === "daily") {
+        state.challenge = buildTodayChallenge();
+        if (parsed.seed.startsWith(DAILY_PREFIX)) state.challenge.code = parsed.seed;
+        state.runSeed = "";
+      } else {
+        state.runSeed = parsed.seed;
+        if (state.runMode !== "seeded") state.runMode = "seeded";
+      }
+      pushEvent(`Loaded challenge code (${state.selectedClass}, ${state.runMode}).`);
+      return;
     }
+    state.runMode = "seeded";
+    state.runSeed = code;
+    pushEvent(`Seeded run ready: ${state.runSeed}`);
   }
 
   function copyRunCode() {
-    const share = state.runMode === "daily" ? state.challenge?.code : state.runSeed || "STANDARD";
+    const share = encodeChallengeCode();
     navigator.clipboard?.writeText(String(share || "STANDARD")).catch(() => {});
     pushEvent(`Copied run code: ${share || "STANDARD"}`);
   }
@@ -725,8 +862,45 @@
   function cycleClass() {
     const keys = Object.keys(shipClasses);
     const idx = keys.indexOf(state.selectedClass);
-    state.selectedClass = keys[(idx + 1 + keys.length) % keys.length];
-    pushEvent(`Class selected: ${shipClasses[state.selectedClass].label}`);
+    for (let step = 1; step <= keys.length; step++) {
+      const next = keys[(idx + step + keys.length) % keys.length];
+      if (isClassUnlocked(next)) {
+        state.selectedClass = next;
+        pushEvent(`Class selected: ${shipClasses[state.selectedClass].label}`);
+        return;
+      }
+    }
+  }
+
+  function isClassUnlocked(classId) {
+    if (classId === "striker") return true;
+    return Boolean(state.meta?.unlocks?.[classId]);
+  }
+
+  function refreshMetaUnlocks(notify = false) {
+    const unlocks = state.meta.unlocks || (state.meta.unlocks = { vanguard: false, engineer: false, phantom: false, rareRelics: false, trail: false });
+    const total = Number(state.meta.totalShardsEarned || 0);
+    const checks = [
+      { id: "vanguard", need: 100, label: "Vanguard class unlocked" },
+      { id: "engineer", need: 240, label: "Engineer class unlocked" },
+      { id: "phantom", need: 420, label: "Phantom class unlocked" },
+      { id: "rareRelics", need: 180, label: "Rare relic pool unlocked" },
+      { id: "trail", need: 300, label: "Cosmetic trail unlocked" },
+    ];
+    for (const c of checks) {
+      if (unlocks[c.id]) continue;
+      if (total >= c.need) {
+        unlocks[c.id] = true;
+        if (notify) pushEvent(c.label);
+      }
+    }
+  }
+
+  function cycleWingmanMode() {
+    const modes = ["balanced", "aggressive", "support"];
+    const idx = modes.indexOf(state.wingmanMode);
+    state.wingmanMode = modes[(idx + 1 + modes.length) % modes.length];
+    pushEvent(`Wingman mode: ${state.wingmanMode}`);
   }
 
   function pickBiomeForWave(wave) {
@@ -759,16 +933,42 @@
     playSfx(140, 0.1, "sawtooth", 0.2);
   }
 
+  function relicWeight(rarity) {
+    if (rarity === "legendary") return 0.16;
+    if (rarity === "rare") return 0.5;
+    return 1;
+  }
+
+  function canOfferRelic(r) {
+    if (r.rarity === "common") return true;
+    if (state.meta?.unlocks?.rareRelics) return true;
+    return false;
+  }
+
+  function rollRelicChoices(count = 3) {
+    const bag = relicDefs.filter((r) => !state.relics[r.id] && canOfferRelic(r));
+    const picks = [];
+    while (picks.length < count && bag.length) {
+      let total = 0;
+      for (const r of bag) total += relicWeight(r.rarity);
+      let roll = rng.range(0, total || 1);
+      let idx = 0;
+      for (; idx < bag.length; idx++) {
+        roll -= relicWeight(bag[idx].rarity);
+        if (roll <= 0) break;
+      }
+      const pickIdx = Math.max(0, Math.min(idx, bag.length - 1));
+      const chosen = bag[pickIdx];
+      picks.push(chosen);
+      bag.splice(pickIdx, 1);
+    }
+    return picks;
+  }
+
   function tryOpenRelicChoice() {
     if (state.wave > 0 && state.wave % 5 === 0 && state.mode === "playing") {
       state.mode = "relic";
-      const pool = relicDefs.filter((r) => !state.relics[r.id]);
-      state.relicChoices = [];
-      while (state.relicChoices.length < 3 && pool.length) {
-        const idx = Math.floor(rng.range(0, pool.length));
-        state.relicChoices.push(pool[idx]);
-        pool.splice(idx, 1);
-      }
+      state.relicChoices = rollRelicChoices(3);
     }
   }
 
@@ -930,6 +1130,10 @@
       heat: state.heat,
       heatTier: state.heatTier,
       bounty: state.bounty,
+      hazards: state.hazards,
+      directorCd: state.directorCd,
+      wingmanMode: state.wingmanMode,
+      evoPulseCounter: state.evoPulseCounter,
       waveSkipCd: state.waveSkipCd,
       pointer: state.pointer,
       coopJoined: state.coopJoined,
@@ -964,6 +1168,10 @@
     state.heat = snap.heat || 0;
     state.heatTier = snap.heatTier || 0;
     state.bounty = snap.bounty || null;
+    state.hazards = Array.isArray(snap.hazards) ? snap.hazards : [];
+    state.directorCd = snap.directorCd || 6;
+    state.wingmanMode = snap.wingmanMode || "balanced";
+    state.evoPulseCounter = snap.evoPulseCounter || 0;
     state.waveSkipCd = snap.waveSkipCd || 0;
     state.pointer = snap.pointer || state.pointer;
     state.coopJoined = Boolean(snap.coopJoined);
@@ -1144,6 +1352,21 @@
     { id: "bomb_radius", label: "+22% bomb radius", apply: () => (player.bombRadiusMult *= 1.22) },
     { id: "dash_burst", label: "Dash emits shockwave", apply: () => (player.dashShockwave += 42) },
     { id: "wingman_arsenal", label: "Wingman +28% damage", apply: () => (player.wingmanDamageMult *= 1.28) },
+    {
+      id: "wing_tree_offense",
+      label: "Wingman tree: offense",
+      apply: () => (player.wingTreeOffense = Math.min(3, player.wingTreeOffense + 1)),
+    },
+    {
+      id: "wing_tree_defense",
+      label: "Wingman tree: defense",
+      apply: () => (player.wingTreeDefense = Math.min(3, player.wingTreeDefense + 1)),
+    },
+    {
+      id: "wing_tree_utility",
+      label: "Wingman tree: utility",
+      apply: () => (player.wingTreeUtility = Math.min(3, player.wingTreeUtility + 1)),
+    },
     { id: "streak_guard", label: "Streak grants shield", apply: () => (player.streakGuard += 1) },
     { id: "salvage_ops", label: "+25% salvage gains", apply: () => (player.salvageMult *= 1.25) },
     { id: "reroll", label: "+1 reroll token", apply: () => (player.rerolls += 1) },
@@ -1241,6 +1464,7 @@
   ];
   const bossCycle = ["dreadnought", "lancer", "hive", "bulwark"];
   state.meta = loadMeta();
+  refreshMetaUnlocks(false);
   state.settings = loadSettings();
   state.runSaveAvailable = hasRunSave();
   state.challenge = buildTodayChallenge();
@@ -1296,6 +1520,67 @@
     if (state.eventClock <= 0) maybeTriggerRunEvent();
   }
 
+  function spawnThreatHazard() {
+    const roll = Math.floor(rng.range(0, 3));
+    if (roll === 0) {
+      const cx = rng.range(WIDTH * 0.2, WIDTH * 0.8);
+      const cy = rng.range(HEIGHT * 0.2, HEIGHT * 0.8);
+      for (let i = 0; i < 12; i++) {
+        const a = (TAU / 12) * i;
+        state.enemyProjectiles.push({
+          x: cx,
+          y: cy,
+          vx: Math.cos(a) * 220 * state.runMods.projectileSpeedMul,
+          vy: Math.sin(a) * 220 * state.runMods.projectileSpeedMul,
+          r: 6,
+          life: 3.8,
+          damage: 9 + state.wave * 0.6,
+        });
+      }
+      pushEvent("Threat event: Shrapnel burst.");
+      return;
+    }
+    if (roll === 1) {
+      for (let i = 0; i < 4; i++) {
+        state.hazards.push({
+          id: "mine",
+          x: rng.range(80, WIDTH - 80),
+          y: rng.range(90, HEIGHT - 90),
+          r: 24 + rng.range(0, 10),
+          life: 8 + rng.range(0, 3),
+          dps: 16 + state.wave * 0.5,
+        });
+      }
+      pushEvent("Threat event: Minefield.");
+      return;
+    }
+    addEnemy("kamikaze");
+    if (state.wave >= 6 && rng.next() < 0.7) addEnemy("shooter");
+    if (state.wave >= 8 && rng.next() < 0.45) addEnemy("summoner");
+    pushEvent("Threat event: Reinforcement warp.");
+  }
+
+  function updateThreatDirector(dt) {
+    if (state.mode !== "playing") return;
+    state.directorCd = Math.max(0, state.directorCd - dt);
+    for (let i = state.hazards.length - 1; i >= 0; i--) {
+      const h = state.hazards[i];
+      h.life -= dt;
+      if (h.life <= 0) {
+        state.hazards.splice(i, 1);
+        continue;
+      }
+      const d = Math.hypot(player.x - h.x, player.y - h.y);
+      if (d < h.r + player.r) {
+        damagePlayer(h.dps * dt);
+      }
+    }
+    if (state.heat >= 45 && state.directorCd <= 0) {
+      spawnThreatHazard();
+      state.directorCd = rng.range(8.5, 14.5);
+    }
+  }
+
   function checkSynergies() {
     for (const s of synergyDefs) {
       if (state.synergies[s.id]) continue;
@@ -1324,6 +1609,10 @@
 
   function getMasteryDamageMul(weaponId) {
     return 1 + getWeaponMasteryTier(weaponId) * 0.045;
+  }
+
+  function isWeaponEvolved(weaponId) {
+    return getWeaponMasteryTier(weaponId) >= 3;
   }
 
   function masteryBonusLines(weaponId) {
@@ -1525,6 +1814,7 @@
     state.metaRewardGranted = true;
     const shardsEarned = Math.max(1, Math.floor(state.score / 140) + state.wave * 2);
     state.meta.shards += shardsEarned;
+    state.meta.totalShardsEarned = Number(state.meta.totalShardsEarned || 0) + shardsEarned;
     state.meta.bestScore = Math.max(state.meta.bestScore, Math.floor(state.score));
     state.meta.bestWave = Math.max(state.meta.bestWave, state.wave);
     state.meta.weaponBest[state.selectedWeapon] = Math.max(state.meta.weaponBest[state.selectedWeapon] || 0, Math.floor(state.score));
@@ -1542,6 +1832,7 @@
         pushEvent(`Daily reward +${dailyBonus} shards (streak ${state.meta.dailyStreak}).`);
       }
     }
+    refreshMetaUnlocks(true);
     saveMeta();
     pushEvent(`Recovered ${shardsEarned} star shards.`);
   }
@@ -1590,6 +1881,10 @@
     state.heat = 0;
     state.heatTier = 0;
     state.bounty = null;
+    state.hazards = [];
+    state.directorCd = 6;
+    state.wingmanMode = "balanced";
+    state.evoPulseCounter = 0;
     state.waveSkipCd = 0;
     state.saveTimer = 0;
     player.x = WIDTH * 0.5;
@@ -1641,6 +1936,9 @@
     player.wingmanDamageMult = 1;
     player.salvageMult = 1;
     player.streakGuard = 0;
+    player.wingTreeOffense = 0;
+    player.wingTreeDefense = 0;
+    player.wingTreeUtility = 0;
     player.rerolls = 1;
     player.banishes = 1;
     player.contactDamageCd = 0;
@@ -1666,8 +1964,10 @@
       clearRunSeed();
       state.runMode = "standard";
     }
+    if (!isClassUnlocked(state.selectedClass)) state.selectedClass = "striker";
     applyMetaPerks();
     shipClasses[state.selectedClass]?.apply?.();
+    if (isWeaponEvolved(state.selectedWeapon)) pushEvent(`${weaponDefs[state.selectedWeapon].name} evolution active.`);
     player.hp = Math.min(player.hp, player.maxHp);
     if (state.runMode === "daily" && state.challenge?.mutators) {
       for (const mut of state.challenge.mutators) mut.apply();
@@ -1990,6 +2290,9 @@
     if (state.mode === "menu" && k === "b") copyRunCode();
     if (state.mode === "menu" && ["7", "8", "9"].includes(k)) purchaseMetaUpgrade(k);
     if (state.mode === "menu" && k === "j") state.coopJoined = !state.coopJoined;
+    if ((state.mode === "playing" || state.mode === "menu") && !(state.mode === "menu" && state.menuScreen === "settings") && k === "t") {
+      cycleWingmanMode();
+    }
     if (state.mode === "menu" && state.menuScreen === "settings" && k === "t") {
       state.settings.showTouchUi = !state.settings.showTouchUi;
       state.settings.accessibilityPreset = "custom";
@@ -2190,6 +2493,8 @@
       elite,
       telegraphShot: 0,
       telegraphBurst: 0,
+      phase: kind === "boss" ? 1 : 0,
+      weakAngle: rng.range(0, TAU),
       hitFlash: 0,
     });
   }
@@ -2281,17 +2586,21 @@
     const w = weaponDefs[state.selectedWeapon];
     if (!w) return;
     const masteryTier = getWeaponMasteryTier(state.selectedWeapon);
+    const evolved = isWeaponEvolved(state.selectedWeapon);
     const dir = getAimDirection();
     const scatterBonus = state.selectedWeapon === "scatter" && masteryTier >= 2 ? 1 : 0;
-    const shots = w.shots + player.multishot + scatterBonus;
+    const evoScatterBonus = state.selectedWeapon === "scatter" && evolved ? 1 : 0;
+    const shots = w.shots + player.multishot + scatterBonus + evoScatterBonus;
     const fireRate = w.cooldown / (player.fireRateMult * (state.overclock > 0 ? 1.45 : 1));
     player.fireCd = fireRate;
+    state.evoPulseCounter += 1;
     playSfx(state.selectedWeapon === "rail" ? 280 : state.selectedWeapon === "scatter" ? 240 : 330, 0.03, "triangle", 0.08);
     for (let i = 0; i < shots; i++) {
       const t = shots === 1 ? 0 : i / (shots - 1) - 0.5;
       const ang = Math.atan2(dir.dy, dir.dx) + t * w.spread * 2;
       const vx = Math.cos(ang) * w.speed * player.projectileSpeedMult * state.runMods.projectileSpeedMul;
       const vy = Math.sin(ang) * w.speed * player.projectileSpeedMult * state.runMods.projectileSpeedMul;
+      const evoDamageMul = state.selectedWeapon === "scatter" && evolved ? 1.1 : 1;
       state.projectiles.push({
         owner: "player",
         x: player.x + Math.cos(ang) * (player.r + 4),
@@ -2300,11 +2609,31 @@
         vy,
         r: (w.name === "Scatter" ? 4 : 5) * player.projectileSizeMult,
         life: 1.15 * player.rangeMult,
-        damage: player.damage * w.damageMult * state.runMods.playerDamageMul * getMasteryDamageMul(state.selectedWeapon),
+        damage: player.damage * w.damageMult * state.runMods.playerDamageMul * getMasteryDamageMul(state.selectedWeapon) * evoDamageMul,
         color: w.color,
         weapon: state.selectedWeapon,
+        evolved,
         pierce: (w.pierce || 1) + player.bonusPierce,
       });
+    }
+    if (state.selectedWeapon === "pulse" && evolved && state.evoPulseCounter % 5 === 0) {
+      for (const da of [-0.24, 0.24]) {
+        const ang = Math.atan2(dir.dy, dir.dx) + da;
+        state.projectiles.push({
+          owner: "player",
+          x: player.x + Math.cos(ang) * (player.r + 4),
+          y: player.y + Math.sin(ang) * (player.r + 4),
+          vx: Math.cos(ang) * (w.speed * 0.95) * player.projectileSpeedMult * state.runMods.projectileSpeedMul,
+          vy: Math.sin(ang) * (w.speed * 0.95) * player.projectileSpeedMult * state.runMods.projectileSpeedMul,
+          r: 4 * player.projectileSizeMult,
+          life: 1.1 * player.rangeMult,
+          damage: player.damage * 0.7 * state.runMods.playerDamageMul * getMasteryDamageMul("pulse"),
+          color: "#8be0ff",
+          weapon: "pulse",
+          evolved: true,
+          pierce: 1 + player.bonusPierce,
+        });
+      }
     }
   }
 
@@ -2470,6 +2799,9 @@
       if (state.bannedUpgrades[u.id]) return false;
       if (u.id === "weapon_scatter") return !state.unlockedWeapons.scatter;
       if (u.id === "weapon_rail") return !state.unlockedWeapons.rail;
+      if (u.id === "wing_tree_offense") return player.wingTreeOffense < 3;
+      if (u.id === "wing_tree_defense") return player.wingTreeDefense < 3;
+      if (u.id === "wing_tree_utility") return player.wingTreeUtility < 3;
       return true;
     });
   }
@@ -2571,7 +2903,7 @@
   function wingmanBomb() {
     if (!state.coopJoined || state.mode !== "playing" || wingman.bombs <= 0 || wingman.bombCd > 0) return;
     wingman.bombs -= 1;
-    wingman.bombCd = 11;
+    wingman.bombCd = Math.max(6.8, 11 - player.wingTreeUtility * 1.1);
     state.flash = Math.max(state.flash, 0.24);
     for (let i = state.enemies.length - 1; i >= 0; i--) {
       const e = state.enemies[i];
@@ -2588,7 +2920,7 @@
     if (!state.coopJoined || state.mode !== "playing" || wingman.fireCd > 0) return;
     const dir = getNearestEnemyDirection(wingman.x, wingman.y, wingman.aimAngle);
     wingman.aimAngle = dir.angle;
-    const rate = 0.18 / (player.fireRateMult * 0.95);
+    const rate = 0.18 / (player.fireRateMult * (0.95 + player.wingTreeOffense * 0.06));
     wingman.fireCd = rate;
     state.projectiles.push({
       owner: "wingman",
@@ -2598,7 +2930,7 @@
       vy: Math.sin(wingman.aimAngle) * 630 * player.projectileSpeedMult,
       r: 4 * player.projectileSizeMult,
       life: 1.05 * player.rangeMult,
-      damage: player.damage * 0.7 * player.wingmanDamageMult,
+      damage: player.damage * (0.7 + player.wingTreeOffense * 0.12) * player.wingmanDamageMult,
       color: "#7dffca",
       pierce: 1 + Math.floor(player.bonusPierce * 0.5),
     });
@@ -2678,9 +3010,32 @@
     const down = wingDown.has("k");
     const dx = (right ? 1 : 0) - (left ? 1 : 0);
     const dy = (down ? 1 : 0) - (up ? 1 : 0);
-    const len = Math.hypot(dx, dy) || 1;
-    const tx = (dx / len) * wingman.speed;
-    const ty = (dy / len) * wingman.speed;
+    const manual = left || right || up || down;
+    let tx = 0;
+    let ty = 0;
+    if (manual) {
+      const len = Math.hypot(dx, dy) || 1;
+      tx = (dx / len) * wingman.speed;
+      ty = (dy / len) * wingman.speed;
+    } else if (state.wingmanMode === "aggressive" && state.enemies.length) {
+      const target = state.enemies[Math.floor(rng.range(0, state.enemies.length))];
+      const adx = target.x - wingman.x;
+      const ady = target.y - wingman.y;
+      const alen = Math.hypot(adx, ady) || 1;
+      tx = (adx / alen) * wingman.speed * (0.78 + player.wingTreeUtility * 0.05);
+      ty = (ady / alen) * wingman.speed * (0.78 + player.wingTreeUtility * 0.05);
+    } else {
+      const offX = state.wingmanMode === "support" ? 110 : 70;
+      const offY = state.wingmanMode === "support" ? 48 : 20;
+      const fdx = player.x + offX - wingman.x;
+      const fdy = player.y + offY - wingman.y;
+      const flen = Math.hypot(fdx, fdy) || 1;
+      tx = (fdx / flen) * wingman.speed * (0.7 + player.wingTreeUtility * 0.06);
+      ty = (fdy / flen) * wingman.speed * (0.7 + player.wingTreeUtility * 0.06);
+      if (state.wingmanMode === "support" && player.wingTreeDefense > 0) {
+        player.shield = Math.min(160, player.shield + dt * 0.55 * player.wingTreeDefense);
+      }
+    }
     wingman.vx += (tx - wingman.vx) * Math.min(1, dt * 14);
     wingman.vy += (ty - wingman.vy) * Math.min(1, dt * 14);
     if (wingPressed.has("o") && wingman.dashCd <= 0) {
@@ -2722,7 +3077,15 @@
           const critMult = player.critMult + (railTier >= 2 ? 0.25 : 0);
           const crit = rng.next() < critChance;
           const bossMul = e.boss ? player.bossDamageMult : 1;
-          const dmg = p.damage * (crit ? critMult : 1) * bossMul;
+          let weakMul = 1;
+          if (e.boss) {
+            const hitAngle = Math.atan2(p.y - e.y, p.x - e.x);
+            const wa = e.weakAngle || 0;
+            const diff = Math.abs(Math.atan2(Math.sin(hitAngle - wa), Math.cos(hitAngle - wa)));
+            const window = 0.62 - (e.phase || 1) * 0.11;
+            weakMul = diff <= window ? 1.65 : 0.58;
+          }
+          const dmg = p.damage * (crit ? critMult : 1) * bossMul * weakMul;
           let dealt = dmg;
           if ((e.shield || 0) > 0) {
             const absorb = Math.min(e.shield, dealt);
@@ -2738,6 +3101,16 @@
           p.pierce -= 1;
           if (p.pierce <= 0) state.projectiles.splice(i, 1);
           spawnParticles(p.x, p.y, crit ? "#ffe38a" : p.color, crit ? 7 : 4, 110);
+          if (p.weapon === "rail" && p.evolved) {
+            for (const ex of state.enemies) {
+              if (ex === e) continue;
+              const splashDist = Math.hypot(ex.x - p.x, ex.y - p.y);
+              if (splashDist < 72) {
+                ex.hp -= dmg * 0.3;
+                ex.hitFlash = 0.08;
+              }
+            }
+          }
           if (e.hp <= 0) enemyDie(j);
           break;
         }
@@ -2805,6 +3178,15 @@
       e.hitFlash = Math.max(0, e.hitFlash - dt);
       e.telegraphShot = Math.max(0, (e.telegraphShot || 0) - dt);
       e.telegraphBurst = Math.max(0, (e.telegraphBurst || 0) - dt);
+      if (e.boss) {
+        const hpRatio = e.maxHp > 0 ? e.hp / e.maxHp : 0;
+        const phase = hpRatio <= 0.33 ? 3 : hpRatio <= 0.67 ? 2 : 1;
+        if (phase !== e.phase) {
+          e.phase = phase;
+          pushEvent(`${e.bossType || "Boss"} phase ${phase} engaged.`);
+        }
+        e.weakAngle = (e.weakAngle || 0) + dt * (0.8 + phase * 0.26);
+      }
       if (e.carrier) {
         for (const n of state.enemies) {
           if (n === e || n.boss) continue;
@@ -2871,8 +3253,9 @@
         }
       }
       if (e.boss) {
-        e.shootCd -= dt * freezeMul;
-        e.burstCd -= dt * freezeMul;
+        const phaseMul = 1 + Math.max(0, (e.phase || 1) - 1) * 0.22;
+        e.shootCd -= dt * freezeMul * phaseMul;
+        e.burstCd -= dt * freezeMul * phaseMul;
         if (e.shootCd > 0 && e.shootCd < 0.36) e.telegraphShot = Math.max(e.telegraphShot, 0.22);
         if (e.burstCd > 0 && e.burstCd < 0.55) e.telegraphBurst = Math.max(e.telegraphBurst, 0.3);
         const pMul = state.runMods.projectileSpeedMul;
@@ -3148,6 +3531,7 @@
     }
     updateTimers(dt, gameplayActive);
     updateRunEvents(dt);
+    updateThreatDirector(dt);
     if (gameplayActive) {
       state.saveTimer += dt;
       if (state.saveTimer >= 8) {
@@ -3211,6 +3595,12 @@
     ctx.beginPath();
     ctx.arc(-2, 0, 8, 0, TAU);
     ctx.fill();
+    if (state.meta?.unlocks?.trail) {
+      ctx.fillStyle = "rgba(255, 208, 134, 0.75)";
+      ctx.beginPath();
+      ctx.arc(-15, 0, 5, 0, TAU);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -3267,6 +3657,15 @@
       ctx.lineWidth = 2;
       ctx.stroke();
     }
+    for (const h of state.hazards) {
+      ctx.fillStyle = "rgba(255, 136, 121, 0.2)";
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, h.r, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 174, 160, 0.85)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
     for (const p of state.projectiles) {
       ctx.fillStyle = adaptColor(p.color);
       ctx.beginPath();
@@ -3308,6 +3707,15 @@
           ctx.lineTo(e.x + Math.cos(aim) * 210, e.y + Math.sin(aim) * 210);
           ctx.stroke();
         }
+      }
+      if (e.boss) {
+        const wa = e.weakAngle || 0;
+        const arc = 0.45;
+        ctx.strokeStyle = "#9ff6d7";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r + 10, wa - arc, wa + arc);
+        ctx.stroke();
       }
       const hpw = e.boss ? 96 : 32;
       ctx.fillStyle = "rgba(0,0,0,0.5)";
@@ -3360,7 +3768,11 @@
     ctx.fillText(`Score ${Math.floor(state.score)}`, 30, 64);
     if (!compact) ctx.fillText(`Kills ${state.kills}`, 30, 89);
     ctx.fillStyle = "#f1f7ff";
-    ctx.fillText(`Weapon ${weaponDefs[state.selectedWeapon].name}`, 30, compact ? 89 : 114);
+    ctx.fillText(
+      `Weapon ${weaponDefs[state.selectedWeapon].name}${isWeaponEvolved(state.selectedWeapon) ? " EVO" : ""}`,
+      30,
+      compact ? 89 : 114
+    );
     ctx.font = "14px Trebuchet MS";
     ctx.fillStyle = "#b9cbef";
     ctx.fillText(`Mode ${state.runMode.toUpperCase()}`, 250, 38);
@@ -3423,6 +3835,10 @@
     }
     ctx.fillStyle = state.heat >= 70 ? "#ffb08a" : state.heat >= 40 ? "#ffd59e" : "#b8d2ff";
     ctx.fillText(`Threat ${Math.round(state.heat)}%`, 390, 241);
+    if (state.heat >= 45) {
+      ctx.fillStyle = "#ffd6b7";
+      ctx.fillText(`Director ${(state.directorCd || 0).toFixed(1)}s`, 510, 241);
+    }
     if (state.streak > 0) {
       ctx.fillStyle = "#ffe9a8";
       ctx.fillText(`Streak x${state.streak}`, 390, 195);
@@ -3450,6 +3866,7 @@
       ctx.fillStyle = "#8cf8d7";
       if (!compact) ctx.fillText("Co-op P2: IJKL move | O dash | U bomb | Auto-aim fire", 18, HEIGHT - 38);
       ctx.fillText(`P2 Bombs ${wingman.bombs} | P2 Dash ${wingman.dashCd <= 0 ? "Ready" : wingman.dashCd.toFixed(1) + "s"}`, WIDTH - 320, 178);
+      if (!compact) ctx.fillText(`Wingman mode ${state.wingmanMode.toUpperCase()} (T to cycle)`, WIDTH - 320, 198);
     }
 
     if (state.overclock > 0) {
@@ -3496,17 +3913,25 @@
         WIDTH * 0.13,
         HEIGHT * 0.39
       );
-      ctx.fillText(`Co-op ${state.coopJoined ? "ON" : "OFF"} (J) | P2: IJKL move, O dash, U bomb`, WIDTH * 0.13, HEIGHT * 0.44);
+      ctx.fillText(
+        `Co-op ${state.coopJoined ? "ON" : "OFF"} (J) | Wingman ${state.wingmanMode.toUpperCase()} (T) | P2: IJKL move, O dash, U bomb`,
+        WIDTH * 0.13,
+        HEIGHT * 0.44
+      );
       ctx.fillText("Online: H host room | G join room | X disconnect", WIDTH * 0.13, HEIGHT * 0.49);
-      ctx.fillText(`Run mode: ${state.runMode.toUpperCase()} (Y toggle daily, V seed, B copy code)`, WIDTH * 0.13, HEIGHT * 0.54);
-      ctx.fillText(`Ship class: ${shipClasses[state.selectedClass]?.label || "Striker"} (N) | Continue (C)`, WIDTH * 0.13, HEIGHT * 0.59);
+      ctx.fillText(`Run mode: ${state.runMode.toUpperCase()} (Y toggle daily, V seed/code load, B copy code)`, WIDTH * 0.13, HEIGHT * 0.54);
+      const classLabel = shipClasses[state.selectedClass]?.label || "Striker";
+      const lockTag = isClassUnlocked(state.selectedClass) ? "" : " (LOCKED)";
+      ctx.fillText(`Ship class: ${classLabel}${lockTag} (N) | Continue (C)`, WIDTH * 0.13, HEIGHT * 0.59);
       if (state.challenge?.code) {
         ctx.fillText(`Daily ${state.challenge.code} | ${state.challenge.labels.join(" / ")}`, WIDTH * 0.13, HEIGHT * 0.63);
       }
       ctx.fillText(
         `Shards ${state.meta?.shards || 0} | Best ${state.meta?.bestScore || 0} pts wave ${state.meta?.bestWave || 0} | M P${getWeaponMasteryTier(
           "pulse"
-        )}/S${getWeaponMasteryTier("scatter")}/R${getWeaponMasteryTier("rail")}`,
+        )}/S${getWeaponMasteryTier("scatter")}/R${getWeaponMasteryTier("rail")} | U V${state.meta?.unlocks?.vanguard ? 1 : 0} E${
+          state.meta?.unlocks?.engineer ? 1 : 0
+        } P${state.meta?.unlocks?.phantom ? 1 : 0} R${state.meta?.unlocks?.rareRelics ? 1 : 0}`,
         WIDTH * 0.13,
         HEIGHT * 0.655
       );
@@ -3527,7 +3952,7 @@
       ctx.fillRect(btn.codex.x, btn.codex.y, btn.codex.w, btn.codex.h);
       ctx.fillStyle = "#122947";
       ctx.font = "22px Trebuchet MS";
-      ctx.fillText("Open Synergy Codex", btn.codex.x + btn.codex.w * 0.23, btn.codex.y + 27);
+      ctx.fillText("Open Combat Codex", btn.codex.x + btn.codex.w * 0.23, btn.codex.y + 27);
 
       ctx.font = "16px Trebuchet MS";
       ctx.fillStyle = "rgba(124, 171, 255, 0.95)";
@@ -3774,10 +4199,27 @@
       ctx.fillStyle = "#eff6ff";
       ctx.font = "28px Trebuchet MS";
       ctx.fillText(r.label, x + 18, y + 72);
+      ctx.font = "16px Trebuchet MS";
+      ctx.fillStyle = relicRarityColors[r.rarity || "common"] || "#d4e2ff";
+      ctx.fillText((r.rarity || "common").toUpperCase(), x + 18, y + 96);
       ctx.font = "18px Trebuchet MS";
       ctx.fillStyle = "#b8cbe9";
-      const detail = r.id === "void_glass" ? "High crit, lower max HP" : r.id === "forge_plate" ? "Tank up, slower ship" : "Major run boost";
-      ctx.fillText(detail, x + 18, y + 112);
+      const detail = r.desc || "Major run boost";
+      const words = detail.split(" ");
+      let line = "";
+      let row = 0;
+      for (const word of words) {
+        const next = line ? `${line} ${word}` : word;
+        if (ctx.measureText(next).width > w - 34) {
+          ctx.fillText(line, x + 18, y + 124 + row * 24);
+          line = word;
+          row += 1;
+          if (row >= 2) break;
+        } else {
+          line = next;
+        }
+      }
+      if (row < 2 && line) ctx.fillText(line, x + 18, y + 124 + row * 24);
     }
   }
 
@@ -3893,6 +4335,7 @@
       runMode: state.runMode,
       runSeed: state.runSeed,
       shipClass: state.selectedClass,
+      wingmanMode: state.wingmanMode,
       wave: state.wave,
       threatHeat: Number(state.heat.toFixed(1)),
       waveProgressSeconds: Number(state.waveClock.toFixed(2)),
@@ -3920,6 +4363,7 @@
       biome: state.biome ? state.biome.id : "nebula",
       endgameMutator: state.endgameMutator ? state.endgameMutator.id : null,
       relicCount: Object.keys(state.relics).length,
+      activeHazards: state.hazards.slice(0, 8).map((h) => ({ x: Number(h.x.toFixed(1)), y: Number(h.y.toFixed(1)), r: Number(h.r.toFixed(1)) })),
       performance: {
         avgFps: Number(state.perf.avgFps.toFixed(1)),
         adaptiveEnemyCapMul: Number(state.perf.adaptiveEnemyCapMul.toFixed(2)),
@@ -4016,6 +4460,8 @@
         dailyStreak: state.meta?.dailyStreak || 0,
         weaponBest: state.meta?.weaponBest || { pulse: 0, scatter: 0, rail: 0 },
         masteryKills: state.meta?.masteryKills || { pulse: 0, scatter: 0, rail: 0 },
+        totalShardsEarned: state.meta?.totalShardsEarned || 0,
+        unlocks: state.meta?.unlocks || { vanguard: false, engineer: false, phantom: false, rareRelics: false, trail: false },
         perks: state.meta?.perks || { hull: 0, cannons: 0, thrusters: 0 },
       },
       score: Number(state.score.toFixed(1)),

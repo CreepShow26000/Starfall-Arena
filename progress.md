@@ -330,3 +330,71 @@ Original prompt: Create a really fun really really high quality game i can play 
     - Toggle to mastery tab via click
     - Toggle back to synergy tab via click
   - Screenshots confirmed both codex tabs render with expected content and controls.
+- Relic choice clarity update completed:
+  - Added explicit `desc` text for every relic in `relicDefs` so choices show exact effects during relic selection.
+  - Updated relic card renderer (`drawRelicSelect`) to display `r.desc` with safe line wrapping instead of old generic hardcoded detail text.
+  - Current relic descriptions shown on card now match actual gameplay effects:
+    - Sun Core: +25% damage, enemies +8% speed
+    - Chrono Shard: +20% fire rate, -15% dash cooldown
+    - Void Glass: +14% crit chance, -20 max HP
+    - Forge Plate: +12% damage reduction, +30 shield, -7% speed
+    - Swarm Node: +2 drones, +20% wingman damage
+    - Entropy Lens: +20% score, +12% enemy spawns
+- Validation:
+  - `node --check game.js` passed.
+  - Playwright gameplay loops ran with no new runtime errors in captured state/screenshot outputs.
+  - Automation did not reliably reach `mode: relic` during this run due repeated level-up states before wave 5, but relic rendering code path is now data-driven and no longer uses placeholder/generic text.
+- Major feature sprint implemented (user requested all roadmap items except weekly quests):
+  - Expanded relic system with rarity + larger pool:
+    - Added rarity tags (`common`, `rare`, `legendary`) and rarity colors.
+    - Added weighted relic offer rolling with unlock gating for rare/legendary pool.
+    - Added 6 new relics (`arc_drive`, `bastion_matrix`, `storm_emitter`, `guardian_halo`, `greed_gear`, `singularity_core`).
+    - Relic cards now show rarity + exact effect text.
+  - Weapon evolution system:
+    - Evolutions activate automatically when weapon mastery reaches tier 3.
+    - Pulse evo: periodic side-burst shots.
+    - Scatter evo: extra pellet + damage boost.
+    - Rail evo: splash damage on hit.
+    - HUD now labels evolved weapon with `EVO`.
+  - Threat director hazards (heat-linked):
+    - Added hazard director cooldown and threat-triggered hazard events when heat is high.
+    - Hazard events include shrapnel bursts, minefields, and reinforcement warps.
+    - Added persistent hazard entities with draw + damage behavior.
+  - Boss phases + weak-point system:
+    - Bosses now track combat phase (1/2/3) from HP ratio and announce phase transitions.
+    - Boss weak-point angle rotates over time.
+    - Boss projectile hit damage now scales by weak-point hit accuracy (bonus on weak hits, reduced on non-weak hits).
+    - Boss attack cadence increases in later phases.
+    - Weak-point arc is rendered on boss bodies.
+  - Companion AI mode + tree:
+    - Added wingman modes (`balanced`, `aggressive`, `support`) with `T` toggle (menu/playing).
+    - Added wingman tree upgrades in level-up pool:
+      - `wing_tree_offense`
+      - `wing_tree_defense`
+      - `wing_tree_utility`
+    - Wingman logic now changes behavior based on mode and tree levels (positioning/support shielding/fire cadence/bomb cooldown).
+  - Meta unlock track:
+    - Added persistent progression fields:
+      - `totalShardsEarned`
+      - `unlocks` (`vanguard`, `engineer`, `phantom`, `rareRelics`, `trail`)
+    - Added unlock progression thresholds and event notifications.
+    - Class selection now respects unlocks; locked classes are skipped in class cycling.
+    - Added cosmetic trail rendering unlock.
+  - Replay/share code upgrade:
+    - Added challenge code format: `SFCH|seed|class|mode`.
+    - `B` now copies full challenge code.
+    - `V` prompt now accepts either raw seed or full challenge code for load/restore.
+  - Save/snapshot/state integration:
+    - Extended run save + load and online snapshot payloads with new systems (`hazards`, director timers, wingman mode, evo counters).
+    - Expanded `render_game_to_text` with new gameplay/meta fields (`wingmanMode`, hazards, unlock-track metadata).
+- UI follow-up:
+  - Adjusted home menu text to avoid overlap after adding unlock/mode info.
+  - Updated codex button label to `Open Combat Codex`.
+- Validation:
+  - `node --check game.js` passed.
+  - Playwright regression loops passed (`actions-menu`, `actions-long`, plus targeted codex/menu checks).
+  - Latest screenshots visually checked for:
+    - Home menu layout stability
+    - Codex behavior intact
+    - Gameplay HUD + wingman mode status
+  - No console/page error artifact files observed in latest output directory checks.
